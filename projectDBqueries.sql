@@ -1,8 +1,3 @@
--- ============================================================
--- Phase 4: Advanced SQL Queries
--- Amazon Clothing Retail Store Database Management System
--- Fall 2026 | Section 001 | Team 5
--- ============================================================
 
 SET LINESIZE 180
 SET PAGESIZE 100

@@ -1,15 +1,8 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
--- =====================================================
--- Amazon Clothing Retail Store Database
--- Phase 4: Data Insertion Script
--- Fall 2026 | Section 001 | Team 5
--- =====================================================
 
 SET SQLBLANKLINES ON
 SET DEFINE OFF
 
--- Insert parent tables before dependent tables.
--- Data insertion statements will be added below.
 
 
 -- =====================================================
