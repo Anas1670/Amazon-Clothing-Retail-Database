@@ -1,3 +1,5 @@
+SET SQLBLANKLINES ON
+
 -- 1. PRODUCT
 -- No foreign keys.
 
@@ -46,7 +48,7 @@ CREATE TABLE F26_S001_T5_SUPPLIER (
     Phone                VARCHAR2(25),
     Email                VARCHAR2(254),
     CreditLimit          NUMBER(12,2),
-    Net30Status          VARCHAR2(1) DEFAULT 'N' NOT NULL,
+    Net30Status          VARCHAR2(20) NOT NULL,
     SavingsPercentage    NUMBER(5,2),
     PaymentTerms         VARCHAR2(100),
     StandardLeadTime     NUMBER(5),
@@ -63,7 +65,7 @@ CREATE TABLE F26_S001_T5_SUPPLIER (
         CHECK (CreditLimit >= 0),
 
     CONSTRAINT F26_S001_T5_SUP_NET30_CK
-        CHECK (Net30Status IN ('Y', 'N')),
+        CHECK (Net30Status IN ('Active', 'Inactive')),
 
     CONSTRAINT F26_S001_T5_SUP_SAVINGS_CK
         CHECK (SavingsPercentage BETWEEN 0 AND 100),
@@ -83,7 +85,7 @@ CREATE TABLE F26_S001_T5_PRODUCT_VARIANT (
     ASIN          VARCHAR2(10) NOT NULL,
     ProductID     NUMBER(10) NOT NULL,
     SupplierID    NUMBER(10) NOT NULL,
-    Size          VARCHAR2(30) NOT NULL,
+    VariantSize   VARCHAR2(30) NOT NULL,
     Color         VARCHAR2(50) NOT NULL,
     SellingPrice  NUMBER(10,2) NOT NULL,
 
@@ -159,15 +161,14 @@ CREATE TABLE F26_S001_T5_INVENTORY_LOCATION (
 -- 7. PURCHASE_ORDER
 -- Has SupplierID as foreign key from SUPPLIER.
 
--- Status values:
--- PLACED:    Order sent to the supplier, not yet shipped.
--- SHIPPED:   Supplier dispatched the shipment.
--- RECEIVED:  Entire purchase order arrived.
--- CANCELLED: Order cancelled before receipt.
+-- Status values used by the project data:
+-- Pending:  Order placed, not yet shipped.
+-- Shipped:  Supplier dispatched the shipment.
+-- Received: Entire purchase order arrived.
 
 -- Implementation assumption: purchase orders are received in full.
 -- Partial deliveries are not tracked.
--- RECEIVED represents a completed order in cost reports.
+-- Received represents a completed order in cost reports.
 
 CREATE TABLE F26_S001_T5_PURCHASE_ORDER (
     PurchaseOrderID        NUMBER(10),
@@ -200,10 +201,9 @@ CREATE TABLE F26_S001_T5_PURCHASE_ORDER (
 
     CONSTRAINT F26_S001_T5_PO_STATUS_CK
         CHECK (Status IN (
-            'PLACED',
-            'SHIPPED',
-            'RECEIVED',
-            'CANCELLED'
+            'Pending',
+            'Shipped',
+            'Received'
         )),
 
     -- A received order must have a receipt date.
@@ -211,9 +211,9 @@ CREATE TABLE F26_S001_T5_PURCHASE_ORDER (
     -- Update Status and DateReceived in the same UPDATE statement.
     CONSTRAINT F26_S001_T5_PO_STATUS_DATE_CK
         CHECK (
-            (Status = 'RECEIVED' AND DateReceived IS NOT NULL)
+            (Status = 'Received' AND DateReceived IS NOT NULL)
             OR
-            (Status <> 'RECEIVED' AND DateReceived IS NULL)
+            (Status <> 'Received' AND DateReceived IS NULL)
         )
 );
 
@@ -270,7 +270,7 @@ CREATE TABLE F26_S001_T5_CUSTOMER (
 -- Has CustomerID as foreign key from CUSTOMER.
 
 CREATE TABLE F26_S001_T5_AMAZON_ORDER (
-    OrderNumber         VARCHAR2(30),
+    OrderNumber         NUMBER(10),
     CustomerID          NUMBER(10) NOT NULL,
     TrackingNumber      VARCHAR2(100),
     PackageWeight       NUMBER(10,3),
@@ -299,7 +299,7 @@ CREATE TABLE F26_S001_T5_AMAZON_ORDER (
         CHECK (ShippingCarrier IN ('USPS', 'UPS', 'FedEx', 'DHL')),
 
     CONSTRAINT F26_S001_T5_AO_SERVICE_CK
-        CHECK (ShippingService IN ('Ground', 'Priority', 'Express')),
+        CHECK (ShippingService IN ('Ground', 'Priority', 'Express', 'Standard')),
 
     CONSTRAINT F26_S001_T5_AO_MONEY_CK
         CHECK (
@@ -350,7 +350,7 @@ CREATE TABLE F26_S001_T5_AMAZON_ORDER (
 -- Has OrderNumber as foreign key from AMAZON_ORDER and VariantID from PRODUCT_VARIANT.
 
 CREATE TABLE F26_S001_T5_ORDER_ITEM (
-    OrderNumber          VARCHAR2(30),
+    OrderNumber          NUMBER(10),
     LineItemNumber       NUMBER(10),
     VariantID            NUMBER(10) NOT NULL,
     Quantity             NUMBER(10) NOT NULL,
@@ -386,7 +386,7 @@ CREATE TABLE F26_S001_T5_ORDER_ITEM (
 
 CREATE TABLE F26_S001_T5_RETURN (
     ReturnNumber        NUMBER(10),
-    OrderNumber         VARCHAR2(30) NOT NULL,
+    OrderNumber         NUMBER(10) NOT NULL,
     LineItemNumber      NUMBER(10) NOT NULL,
     ReturnDate          DATE NOT NULL,
     Reason              VARCHAR2(500),
@@ -461,7 +461,7 @@ CREATE TABLE F26_S001_T5_OPERATING_COST (
         CHECK (Amount >= 0),
 
     CONSTRAINT F26_S001_T5_OC_TYPE_CK
-        CHECK (ExpenseType IN ('RECURRING', 'ONE_TIME'))
+        CHECK (ExpenseType IN ('Fixed', 'Variable', 'Operating'))
 );
 
 
