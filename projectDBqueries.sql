@@ -246,63 +246,64 @@ COLUMN NetRevenue FORMAT 9999990.00
 COLUMN MonthlyRevenuePct FORMAT 990.00
 COLUMN RevenueRank FORMAT 9990
 
-WITH MonthlySales AS (
+SELECT
+    TO_CHAR(rs.MonthStart, 'YYYY-MM') AS SalesMonth,
+    rs.VariantID,
+    rs.ProductName,
+    rs.Brand,
+    rs.UnitsSold,
+    ROUND(rs.NetRevenue, 2) AS NetRevenue,
+    rs.RevenueRank,
+    rs.MonthlyRevenuePct
+FROM (
     SELECT
-        TRUNC(ao.OrderDate, 'MM') AS MonthStart,
-        pv.VariantID,
-        p.ProductName,
-        p.Brand,
-        SUM(oi.Quantity) AS UnitsSold,
-        SUM(
-            oi.Quantity * oi.SellingPricePerUnit - oi.Discount
-        ) AS NetRevenue
-    FROM F26_S001_T5_AMAZON_ORDER ao
-    JOIN F26_S001_T5_ORDER_ITEM oi
-        ON ao.OrderNumber = oi.OrderNumber
-    JOIN F26_S001_T5_PRODUCT_VARIANT pv
-        ON oi.VariantID = pv.VariantID
-    JOIN F26_S001_T5_PRODUCT p
-        ON pv.ProductID = p.ProductID
-    GROUP BY
-        TRUNC(ao.OrderDate, 'MM'),
-        pv.VariantID,
-        p.ProductName,
-        p.Brand
-),
-RankedSales AS (
-    SELECT
-        MonthStart,
-        VariantID,
-        ProductName,
-        Brand,
-        UnitsSold,
-        NetRevenue,
+        ms.MonthStart,
+        ms.VariantID,
+        ms.ProductName,
+        ms.Brand,
+        ms.UnitsSold,
+        ms.NetRevenue,
         DENSE_RANK() OVER (
-            PARTITION BY MonthStart
-            ORDER BY NetRevenue DESC
+            PARTITION BY ms.MonthStart
+            ORDER BY ms.NetRevenue DESC
         ) AS RevenueRank,
         ROUND(
-            100 * NetRevenue
+            100 * ms.NetRevenue
             / NULLIF(
-                SUM(NetRevenue) OVER (PARTITION BY MonthStart),
+                SUM(ms.NetRevenue) OVER (
+                    PARTITION BY ms.MonthStart
+                ),
                 0
             ),
             2
         ) AS MonthlyRevenuePct
-    FROM MonthlySales
-)
-SELECT
-    TO_CHAR(MonthStart, 'YYYY-MM') AS SalesMonth,
-    VariantID,
-    ProductName,
-    Brand,
-    UnitsSold,
-    ROUND(NetRevenue, 2) AS NetRevenue,
-    RevenueRank,
-    MonthlyRevenuePct
-FROM RankedSales
-WHERE RevenueRank <= 3
-ORDER BY MonthStart, RevenueRank, VariantID;
+    FROM (
+        SELECT
+            TRUNC(ao.OrderDate, 'MM') AS MonthStart,
+            pv.VariantID,
+            p.ProductName,
+            p.Brand,
+            SUM(oi.Quantity) AS UnitsSold,
+            SUM(
+                oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount
+            ) AS NetRevenue
+        FROM F26_S001_T5_AMAZON_ORDER ao
+        JOIN F26_S001_T5_ORDER_ITEM oi
+            ON ao.OrderNumber = oi.OrderNumber
+        JOIN F26_S001_T5_PRODUCT_VARIANT pv
+            ON oi.VariantID = pv.VariantID
+        JOIN F26_S001_T5_PRODUCT p
+            ON pv.ProductID = p.ProductID
+        GROUP BY
+            TRUNC(ao.OrderDate, 'MM'),
+            pv.VariantID,
+            p.ProductName,
+            p.Brand
+    ) ms
+) rs
+WHERE rs.RevenueRank <= 3
+ORDER BY rs.MonthStart, rs.RevenueRank, rs.VariantID;
 
 
 -- ============================================================
