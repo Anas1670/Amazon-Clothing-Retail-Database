@@ -76,3 +76,59 @@ JOIN F26_S001_T5_PRODUCT p
 GROUP BY p.Category
 HAVING SUM(oi.Quantity) >= 5
 ORDER BY TotalRevenue DESC;
+
+-- ============================================================
+-- Query 7: Product price similarity recommendations.
+--
+-- Business question:
+-- Which five product variants have pricing characteristics
+-- most similar to the Classic Cotton T-Shirt (Variant 2001),
+-- based on MSRP and selling price?
+--
+-- Features: Multiple JOINs, VECTOR_DISTANCE, TO_VECTOR,
+--           ORDER BY, FETCH FIRST.
+-- ============================================================
+
+PROMPT
+PROMPT ===== QUERY 7: PRODUCT PRICE SIMILARITY =====
+
+COLUMN ProductName FORMAT A25
+COLUMN Category FORMAT A20
+COLUMN PriceDistance FORMAT 999990.00
+
+SELECT
+    pv.VariantID,
+    p.ProductName,
+    p.Category,
+    p.MSRP,
+    pv.SellingPrice,
+    ROUND(
+        VECTOR_DISTANCE(
+            VECTOR('[19.99,17.99]'),
+            TO_VECTOR(
+                '[' || TO_CHAR(p.MSRP, 'FM999990D00', 'NLS_NUMERIC_CHARACTERS=''.,''')
+                || ',' ||
+                TO_CHAR(pv.SellingPrice, 'FM999990D00', 'NLS_NUMERIC_CHARACTERS=''.,''')
+                || ']'
+            ),
+            EUCLIDEAN
+        ),
+        2
+    ) AS PriceDistance
+FROM F26_S001_T5_PRODUCT_VARIANT pv
+JOIN F26_S001_T5_PRODUCT p
+    ON pv.ProductID = p.ProductID
+WHERE pv.VariantID <> 2001
+ORDER BY PriceDistance ASC, pv.VariantID
+FETCH FIRST 5 ROWS ONLY;
+
+-- Expected output (verified in Oracle Omega):
+--
+-- VariantID  ProductName             Category      MSRP   SellingPrice  PriceDistance
+-- 2033       Everyday Crew Socks     Accessories   18.99  17.09         1.35
+-- 2005       Ribbed Tank Top         Tops          16.99  15.29         4.04
+-- 2034       Winter Knit Beanie      Accessories   22.99  20.69         4.04
+-- 2032       Seamless Briefs         Underwear     24.99  22.49         6.73
+-- 2042       Cotton Henley Shirt     Tops          26.99  24.29         9.42
+--
+-- 5 rows selected.
