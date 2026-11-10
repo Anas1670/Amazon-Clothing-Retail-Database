@@ -54,7 +54,7 @@ INSERT INTO F26_S001_T5_OPERATING_COST
 VALUES
     (9050, DATE '2026-11-06', 'Warehouse Supplies',
      'Packaging boxes and shipping tape',
-     'Company Credit Card', 125.00, 'Operating');
+     'Company Credit Card', 125.00, 'Recurring');
 
 PROMPT ===== AFTER INSERT =====
 

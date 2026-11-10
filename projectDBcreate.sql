@@ -461,7 +461,7 @@ CREATE TABLE F26_S001_T5_OPERATING_COST (
         CHECK (Amount >= 0),
 
     CONSTRAINT F26_S001_T5_OC_TYPE_CK
-        CHECK (ExpenseType IN ('Fixed', 'Variable', 'Operating'))
+        CHECK (ExpenseType IN ('Recurring', 'One-time'))
 );
 
 
