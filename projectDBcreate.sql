@@ -465,7 +465,34 @@ CREATE TABLE F26_S001_T5_OPERATING_COST (
 );
 
 
+-- ============================================================
+-- BUSINESS RULE TRIGGER: RETURN DATE VALIDATION
+-- A return cannot precede its original Amazon order date.
+-- ============================================================
 
+CREATE OR REPLACE TRIGGER F26_S001_T5_RET_DATE_TRG
+BEFORE INSERT OR UPDATE OF OrderNumber, LineItemNumber, ReturnDate
+ON F26_S001_T5_RETURN
+FOR EACH ROW
+DECLARE
+    v_OrderDate DATE;
+BEGIN
+    SELECT ao.OrderDate
+    INTO v_OrderDate
+    FROM F26_S001_T5_ORDER_ITEM oi
+    JOIN F26_S001_T5_AMAZON_ORDER ao
+        ON oi.OrderNumber = ao.OrderNumber
+    WHERE oi.OrderNumber = :NEW.OrderNumber
+      AND oi.LineItemNumber = :NEW.LineItemNumber;
+
+    IF :NEW.ReturnDate < v_OrderDate THEN
+        RAISE_APPLICATION_ERROR(
+            -20001,
+            'Return date cannot precede the original order date.'
+        );
+    END IF;
+END;
+/
 
 
 
