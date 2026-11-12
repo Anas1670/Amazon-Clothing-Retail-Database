@@ -10,6 +10,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 
 -- ============================================================
 -- Query 1: Complete inventory alert report
+PROMPT ===== QUERY 1: COMPLETE INVENTORY ALERT REPORT =====
 --
 -- English question:
 -- Which variants are out of stock, at or below their reorder
@@ -115,7 +116,7 @@ ORDER BY AvailableStock, VariantID;
 --
 -- ============================================================
 
-===== QUERY 2: MONTHLY CATEGORY PROFITABILITY =====
+PROMPT ===== QUERY 2: MONTHLY CATEGORY PROFITABILITY =====
 
 COLUMN SalesMonth FORMAT A10
 COLUMN Category FORMAT A15
@@ -297,7 +298,7 @@ ORDER BY SalesMonth, Category;
 -- COUNT, SUM, LIKE, CASE, OVER, and ORDER BY.
 --
 -- ============================================================
-QUERY 3: RETURN RATES AND REASONS =====
+PROMPT ===== QUERY 3: RETURN RATES AND REASONS =====
 
 COLUMN ProductName FORMAT A28
 COLUMN Brand FORMAT A18
@@ -449,7 +450,7 @@ ORDER BY
 -- Features: Multiple JOINs, ROLLUP, GROUPING, CASE, aggregates.
 -- ============================================================
 
-===== QUERY 4: MONTHLY CATEGORY SALES ROLLUP =====
+PROMPT ===== QUERY 4: MONTHLY CATEGORY SALES ROLLUP =====
 
 COLUMN SalesMonth FORMAT A12
 COLUMN CategoryLabel FORMAT A22
@@ -534,7 +535,7 @@ ORDER BY
 --           NOT EXISTS, JOIN.
 -- ============================================================
 
-===== QUERY 5: SUPPLIERS COVERING ALL ASSIGNED VARIANTS =====
+PROMPT ===== QUERY 5: SUPPLIERS COVERING ALL ASSIGNED VARIANTS =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A12
@@ -613,7 +614,7 @@ ORDER BY s.SupplierName, s.SupplierID;
 --           SUM OVER, nested filtering.
 -- ============================================================
 
-===== QUERY 6: MONTHLY TOP VARIANTS =====
+PROMPT ===== QUERY 6: MONTHLY TOP VARIANTS =====
 
 COLUMN SalesMonth FORMAT A10
 COLUMN ProductName FORMAT A28
@@ -715,7 +716,7 @@ ORDER BY rs.MonthStart, rs.RevenueRank, rs.VariantID;
 --           ORDER BY, FETCH FIRST.
 -- ============================================================
 
-===== QUERY 7: PRODUCT PRICE SIMILARITY =====
+PROMPT ===== QUERY 7: PRODUCT PRICE SIMILARITY =====
 
 COLUMN ProductName FORMAT A25
 COLUMN Category FORMAT A20
@@ -773,7 +774,7 @@ FETCH FIRST 5 ROWS ONLY;
 -- calculated column, ORDER BY, FETCH FIRST.
 -- ============================================================
 
-===== QUERY 8: RETURN COST ANALYSIS =====
+PROMPT ===== QUERY 8: RETURN COST ANALYSIS =====
 
 COLUMN Category FORMAT A18
 COLUMN Brand FORMAT A22
@@ -845,7 +846,7 @@ FETCH FIRST 10 ROWS ONLY;
 -- COUNT, SUM, AVG, CASE, calculated percentages, ORDER BY.
 -- ============================================================
 
-===== QUERY 9: SUPPLIER PERFORMANCE SUMMARY =====
+PROMPT ===== QUERY 9: SUPPLIER PERFORMANCE SUMMARY =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A11
@@ -983,7 +984,7 @@ ORDER BY
 --           calculated percentage, ORDER BY.
 -- ============================================================
 
-===== QUERY 10: SHIPPING PERFORMANCE ANALYSIS =====
+PROMPT ===== QUERY 10: SHIPPING PERFORMANCE ANALYSIS =====
 
 COLUMN ShippingCarrier FORMAT A16
 COLUMN ShippingService FORMAT A14
@@ -1066,7 +1067,7 @@ ORDER BY
 -- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
 -- ============================================================
 
-===== QUERY 11: PRODUCT-VARIANT PROFITABILITY =====
+PROMPT ===== QUERY 11: PRODUCT-VARIANT PROFITABILITY =====
 
 COLUMN ProductName FORMAT A30
 COLUMN VariantSize FORMAT A11
@@ -1274,7 +1275,7 @@ ORDER BY
 -- CASE, calendar generation, calculated columns, ORDER BY.
 -- ============================================================
 
-===== QUERY 12: MONTHLY PROFIT AND LOSS =====
+PROMPT ===== QUERY 12: MONTHLY PROFIT AND LOSS =====
 
 COLUMN ReportMonth FORMAT A11
 COLUMN NetSales FORMAT 999999990.00
@@ -1502,7 +1503,7 @@ ORDER BY ReportMonth;
 -- ORDER BY.
 -- ============================================================
 
-===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
+PROMPT ===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
 
 COLUMN ReportLevel FORMAT A12
 COLUMN Fname FORMAT A12
@@ -1674,7 +1675,7 @@ ORDER BY
 -- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
 -- ============================================================
 
-===== QUERY 14: BRAND PERFORMANCE =====
+PROMPT ===== QUERY 14: BRAND PERFORMANCE =====
 
 COLUMN Brand FORMAT A20
 COLUMN UnitsSold FORMAT 999990
@@ -1864,7 +1865,7 @@ ORDER BY NetSales DESC, Brand;
 -- Multiple JOINs, nested subqueries, GROUP BY, SUM, AVG,
 -- COUNT, CASE, date functions, and ORDER BY.
 -- ============================================================
-===== QUERY 15: COMPARABLE-MONTH DEMAND FORECAST =====
+PROMPT ===== QUERY 15: COMPARABLE-MONTH DEMAND FORECAST =====
 
 COLUMN VariantID FORMAT 9999999990
 COLUMN ProductName FORMAT A30
@@ -2009,7 +2010,7 @@ ORDER BY TargetMonth, VariantID;
 -- These are estimates, not verified realized savings.
 -- ============================================================
 
-===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
+PROMPT ===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A11
