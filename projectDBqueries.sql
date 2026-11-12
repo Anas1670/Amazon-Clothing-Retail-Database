@@ -5,6 +5,8 @@ SET LINESIZE 300
 SET PAGESIZE 100
 SET NUMWIDTH 12
 SET NULL 'NULL'
+WHENEVER OSERROR EXIT FAILURE
+WHENEVER SQLERROR EXIT SQL.SQLCODE
 
 -- ============================================================
 -- Query 1: Complete inventory alert report
@@ -286,6 +288,9 @@ ORDER BY SalesMonth, Category;
 -- product variant, identified by product, brand, category,
 -- size, and color? What share of its returns had each reason?
 --
+-- ReturnRatePct is an ORDER-LINE return rate, not a unit-return
+-- rate. The RETURN table has no returned-quantity attribute.
+--
 -- Business Goals: 2 and 3
 --
 -- Features:
@@ -314,7 +319,7 @@ SELECT
     pv.VariantSize,
     pv.Color,
     ROUND(
-        100 * ReturnedLines / NULLIF(SoldLines, 0),
+        100 * NVL(ReturnedLines, 0) / NULLIF(SoldLines, 0),
         2
     ) AS ReturnRatePct,
     CASE
@@ -343,16 +348,26 @@ JOIN F26_S001_T5_PRODUCT p
 JOIN (
     SELECT
         oi.VariantID AS SalesVariantID,
-        COUNT(*) AS SoldLines,
-        COUNT(r.ReturnNumber) AS ReturnedLines
+        COUNT(*) AS SoldLines
     FROM F26_S001_T5_ORDER_ITEM oi
-    LEFT JOIN F26_S001_T5_RETURN r
-        ON r.OrderNumber = oi.OrderNumber
-       AND r.LineItemNumber = oi.LineItemNumber
     GROUP BY oi.VariantID
     HAVING COUNT(*) > 0
 )
     ON SalesVariantID = pv.VariantID
+LEFT JOIN (
+    SELECT
+        oi.VariantID AS ReturnedVariantID,
+        COUNT(DISTINCT
+            TO_CHAR(r.OrderNumber) || ':' ||
+            TO_CHAR(r.LineItemNumber)
+        ) AS ReturnedLines
+    FROM F26_S001_T5_RETURN r
+    JOIN F26_S001_T5_ORDER_ITEM oi
+        ON oi.OrderNumber = r.OrderNumber
+       AND oi.LineItemNumber = r.LineItemNumber
+    GROUP BY oi.VariantID
+)
+    ON ReturnedVariantID = pv.VariantID
 LEFT JOIN (
     SELECT
         oi.VariantID AS ReasonVariantID,
@@ -823,8 +838,11 @@ FETCH FIRST 10 ROWS ONLY;
 --
 -- English question:
 -- How do suppliers compare on delivery reliability, actual
--- lead time, purchase history, customer-return rates,
+-- lead time, purchase history, customer ORDER-LINE return rates,
 -- Net 30 status, and credit limits?
+--
+-- ReturnRatePct is returned distinct order lines divided by
+-- sold distinct order lines. It is not a unit-return rate.
 --
 -- Business Goal: 4
 --
@@ -909,16 +927,28 @@ LEFT JOIN (
     ON PurchaseSupplierID = s.SupplierID
 LEFT JOIN (
     SELECT
-        pv.SupplierID AS ReturnSupplierID,
-        COUNT(oi.LineItemNumber) AS SoldLines,
-        COUNT(r.ReturnNumber) AS ReturnedLines
-    FROM F26_S001_T5_PRODUCT_VARIANT pv
-    LEFT JOIN F26_S001_T5_ORDER_ITEM oi
-        ON oi.VariantID = pv.VariantID
-    LEFT JOIN F26_S001_T5_RETURN r
-        ON r.OrderNumber = oi.OrderNumber
-       AND r.LineItemNumber = oi.LineItemNumber
-    GROUP BY pv.SupplierID
+        SupplierID AS ReturnSupplierID,
+        COUNT(*) AS SoldLines,
+        SUM(HasReturn) AS ReturnedLines
+    FROM (
+        -- One row per supplier/order line. DISTINCT prevents
+        -- multiple return records from inflating either count.
+        SELECT DISTINCT
+            pv.SupplierID,
+            oi.OrderNumber,
+            oi.LineItemNumber,
+            CASE
+                WHEN r.ReturnNumber IS NOT NULL THEN 1
+                ELSE 0
+            END AS HasReturn
+        FROM F26_S001_T5_PRODUCT_VARIANT pv
+        JOIN F26_S001_T5_ORDER_ITEM oi
+            ON oi.VariantID = pv.VariantID
+        LEFT JOIN F26_S001_T5_RETURN r
+            ON r.OrderNumber = oi.OrderNumber
+           AND r.LineItemNumber = oi.LineItemNumber
+    )
+    GROUP BY SupplierID
 )
     ON ReturnSupplierID = s.SupplierID
 ORDER BY
@@ -926,55 +956,8 @@ ORDER BY
     AvgLeadDays ASC NULLS LAST,
     s.SupplierName;
 
--- Expected output (verified in Oracle Omega):
--- SupplierID | SupplierName                   | Net30Status | CreditLimit | ReceivedOrders | OnTimePct | AvgLeadDays | PurchaseHistory | ReceivedValue | ReturnRatePct
--- 36         | Brightline Textile Group       | Inactive    | 40000.00    | 1              | 100.00    | 8.00        | 400.00          | 400.00        | 100.00
--- 3          | Evergreen Fabric Distributors  | Active      | 25000.00    | 1              | 100.00    | 8.00        | 612.50          | 612.50        | 100.00
--- 33         | Frontier Clothing Wholesale    | Active      | 25000.00    | 1              | 100.00    | 8.00        | 812.50          | 812.50        | 100.00
--- 42         | Global Stitch Partners         | Active      | 20000.00    | 1              | 100.00    | 8.00        | 750.00          | 750.00        | 100.00
--- 27         | Meridian Textile Supply        | Active      | 45000.00    | 1              | 100.00    | 8.00        | 612.50          | 612.50        | 100.00
--- 12         | Silverline Clothing Supply     | Inactive    | 20000.00    | 1              | 100.00    | 8.00        | 400.00          | 400.00        | 100.00
--- 21         | Sterling Garment Distributors  | Active      | 15000.00    | 1              | 100.00    | 8.00        | 1462.50         | 1462.50       | 100.00
--- 6          | Summit Fashion Supply          | Active      | 40000.00    | 1              | 100.00    | 8.00        | 1250.00         | 1250.00       | 100.00
--- 18         | Westbrook Apparel Group        | Active      | 50000.00    | 1              | 100.00    | 8.00        | 750.00          | 750.00        | 100.00
--- 37         | Capital Garment Supply         | Active      | 45000.00    | 1              | 100.00    | 9.00        | 562.50          | 562.50        | 100.00
--- 7          | Coastal Denim Distributors     | Active      | 45000.00    | 1              | 100.00    | 9.00        | 1512.50         | 1512.50       | 100.00
--- 43         | Crown Apparel Wholesale        | Active      | 25000.00    | 1              | 100.00    | 9.00        | 962.50          | 962.50        | 100.00
--- 22         | Harbor Fashion Wholesale       | Active      | 20000.00    | 1              | 100.00    | 9.00        | 1750.00         | 1750.00       | 100.00
--- 28         | Lakeside Garment Wholesale      | Inactive    | 50000.00    | 1              | 100.00    | 9.00        | 800.00          | 800.00        | 100.00
--- 13         | Oakwood Fashion Distributors   | Active      | 25000.00    | 1              | 100.00    | 9.00        | 562.50          | 562.50        | 100.00
--- 1          | Pacific Cotton Textiles        | Active      | 15000.00    | 1              | 100.00    | 9.00        | 312.50          | 312.50        | 100.00
--- 31         | Skyline Apparel Trading        | Active      | 15000.00    | 1              | 100.00    | 9.00        | 1512.50         | 1512.50       | 100.00
--- 16         | Valley Knitwear Supply         | Inactive    | 40000.00    | 1              | 100.00    | 9.00        | 400.00          | 400.00        | 100.00
--- 17         | Atlantic Fashion Trading       | Active      | 45000.00    | 1              | 100.00    | 10.00       | 562.50          | 562.50        | 100.00
--- 26         | Brookfield Clothing Partners   | Active      | 40000.00    | 1              | 100.00    | 10.00       | 450.00          | 450.00        | 100.00
--- 2          | Golden State Apparel Supply    | Active      | 20000.00    | 1              | 100.00    | 10.00       | 450.00          | 450.00        | 100.00
--- 38         | Horizon Fashion Wholesale      | Active      | 50000.00    | 1              | 100.00    | 10.00       | 750.00          | 750.00        | 100.00
--- 11         | Liberty Textile Trading        | Active      | 15000.00    | 1              | 100.00    | 10.00       | 1312.50         | 1312.50       | 100.00
--- 23         | Prime Stitch Textiles          | Active      | 25000.00    | 1              | 100.00    | 10.00       | 2062.50         | 2062.50       | 100.00
--- 41         | Riverside Textile Trading      | Active      | 15000.00    | 1              | 100.00    | 10.00       | 562.50          | 562.50        | 100.00
--- 32         | Royal Thread Supply            | Inactive    | 20000.00    | 1              | 100.00    | 10.00       | 600.00          | 600.00        | 100.00
--- 8          | Urban Thread Wholesale         | Inactive    | 50000.00    | 1              | 100.00    | 10.00       | 600.00          | 600.00        | 100.00
--- 29         | Aspire Fashion Distributors    | Active      | 55000.00    | 0              | NULL      | NULL        | 1012.50         | 0.00          | 100.00
--- 5          | Blue Ridge Textile Group       | Active      | 35000.00    | 0              | NULL      | NULL        | 1012.50         | 0.00          | 100.00
--- 24         | Canyon Apparel Supply          | Inactive    | 30000.00    | 0              | NULL      | NULL        | 200.00          | 0.00          | 100.00
--- 30         | Cedar Valley Textiles          | Active      | 10000.00    | 0              | NULL      | NULL        | 1250.00         | 0.00          | 100.00
--- 45         | Continental Fashion Textiles   | Active      | 35000.00    | 0              | NULL      | NULL        | 1462.50         | 0.00          | 100.00
--- 19         | Crescent Textile Partners      | Active      | 55000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
--- 34         | Diamond Fabric Partners        | Active      | 30000.00    | 0              | NULL      | NULL        | 1050.00         | 0.00          | 100.00
--- 40         | Elite Cotton Distributors      | Inactive    | 10000.00    | 0              | NULL      | NULL        | 400.00          | 0.00          | 100.00
--- 25         | Grandview Fabric Company       | Active      | 35000.00    | 0              | NULL      | NULL        | 312.50          | 0.00          | 100.00
--- 9          | Heritage Garment Supply        | Active      | 55000.00    | 0              | NULL      | NULL        | 812.50          | 0.00          | 100.00
--- 35         | Maple Grove Apparel            | Active      | 35000.00    | 0              | NULL      | NULL        | 1312.50         | 0.00          | 100.00
--- 14         | Metro Garment Wholesale        | Active      | 30000.00    | 0              | NULL      | NULL        | 750.00          | 0.00          | 100.00
--- 4          | Northstar Clothing Wholesale   | Inactive    | 30000.00    | 0              | NULL      | NULL        | 800.00          | 0.00          | 100.00
--- 15         | Pioneer Cotton Company         | Active      | 35000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
--- 44         | Premier Garment Supply         | Inactive    | 30000.00    | 0              | NULL      | NULL        | 1200.00         | 0.00          | 100.00
--- 20         | Redwood Clothing Supply        | Inactive    | 10000.00    | 0              | NULL      | NULL        | 1200.00         | 0.00          | 100.00
--- 39         | Stonebridge Clothing Supply    | Active      | 55000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
--- 10         | Sunrise Apparel Partners       | Active      | 10000.00    | 0              | NULL      | NULL        | 1050.00         | 0.00          | 100.00
---
--- 45 rows selected.
+-- Expected output should be regenerated after testing the
+-- distinct-order-line return-rate calculation on Omega.
 
 -- ============================================================
 -- Query 10: Shipping carrier and service performance analysis.
@@ -2002,15 +1985,24 @@ ORDER BY TargetMonth, VariantID;
 -- Query 16: Supplier credit and estimated savings
 --
 -- English question:
--- Which suppliers currently have active Net 30 status,
--- what are their credit limits and purchase histories,
--- and what savings would a 3.5 percent scenario imply?
+-- Which suppliers have active Net 30 status, what are their
+-- credit limits and purchase histories, and how do their
+-- recorded savings rates compare with a hypothetical 3.5%
+-- savings scenario?
 --
 -- Business Goal: 13
 --
 -- Features:
--- JOIN, aggregated subquery, GROUP BY,
--- SUM, CASE, calculated columns, ORDER BY.
+-- JOIN, aggregated subquery, GROUP BY, SUM, CASE,
+-- calculated columns, ORDER BY.
+--
+-- RecordedRateSavings applies each supplier's stored
+-- SavingsPercentage to received purchase value.
+-- EstSavings35 is a hypothetical 3.5% estimate for suppliers
+-- with both Active status and Net 30 payment terms.
+-- PotentialSavings35 shows the same hypothetical amount for
+-- suppliers that do not currently meet both conditions.
+-- These are estimates, not verified realized savings.
 -- ============================================================
 
 PROMPT
@@ -2018,97 +2010,74 @@ PROMPT ===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A11
+COLUMN PaymentTerms FORMAT A12
 COLUMN CreditLimit FORMAT 9999990.00
+COLUMN SavingsPercentage FORMAT 990.00
 COLUMN PurchaseHistory FORMAT 999999990.00
 COLUMN ReceivedPurchases FORMAT 999999990.00
-COLUMN EstSavings FORMAT 9999990.00
-COLUMN PotentialSavings FORMAT 9999990.00
+COLUMN RecordedRateSavings FORMAT 9999990.00
+COLUMN EstSavings35 FORMAT 9999990.00
+COLUMN PotentialSavings35 FORMAT 9999990.00
 
 SELECT
     s.SupplierID,
     s.SupplierName,
     s.Net30Status,
+    s.PaymentTerms,
     s.CreditLimit,
-    NVL(OrderedValue, 0) AS PurchaseHistory,
-    NVL(ReceivedValue, 0) AS ReceivedPurchases,
+    s.SavingsPercentage,
+    NVL(p.OrderedValue, 0) AS PurchaseHistory,
+    NVL(p.ReceivedValue, 0) AS ReceivedPurchases,
+
+    ROUND(
+        NVL(p.ReceivedValue, 0)
+        * NVL(s.SavingsPercentage, 0) / 100,
+        2
+    ) AS RecordedRateSavings,
+
     CASE
-        WHEN s.Net30Status = 'Active'
-            THEN ROUND(NVL(ReceivedValue, 0) * 0.035, 2)
+        WHEN UPPER(TRIM(s.Net30Status)) = 'ACTIVE'
+         AND UPPER(TRIM(s.PaymentTerms)) = 'NET 30'
+        THEN ROUND(
+            NVL(p.ReceivedValue, 0) * 0.035,
+            2
+        )
         ELSE 0
-    END AS EstSavings,
+    END AS EstSavings35,
+
     CASE
-        WHEN s.Net30Status = 'Inactive'
-            THEN ROUND(NVL(ReceivedValue, 0) * 0.035, 2)
+        WHEN NVL(UPPER(TRIM(s.Net30Status)), 'UNKNOWN') <> 'ACTIVE'
+          OR NVL(UPPER(TRIM(s.PaymentTerms)), 'UNKNOWN') <> 'NET 30'
+        THEN ROUND(
+            NVL(p.ReceivedValue, 0) * 0.035,
+            2
+        )
         ELSE 0
-    END AS PotentialSavings
+    END AS PotentialSavings35
+
 FROM F26_S001_T5_SUPPLIER s
+
 LEFT JOIN (
     SELECT
-        SupplierID AS PurchaseSupplierID,
+        SupplierID,
         SUM(TotalCost) AS OrderedValue,
         SUM(
             CASE
-                WHEN Status = 'Received'
-                    THEN TotalCost
+                WHEN UPPER(TRIM(Status)) = 'RECEIVED'
+                THEN TotalCost
                 ELSE 0
             END
         ) AS ReceivedValue
     FROM F26_S001_T5_PURCHASE_ORDER
     GROUP BY SupplierID
-)
-    ON PurchaseSupplierID = s.SupplierID
+) p
+    ON p.SupplierID = s.SupplierID
+
 ORDER BY
-    PotentialSavings DESC,
-    EstSavings DESC,
+    PotentialSavings35 DESC,
+    EstSavings35 DESC,
+    RecordedRateSavings DESC,
     s.SupplierName;
 
--- Expected output (verified in Oracle Omega):
--- SupplierID | SupplierName                   | Net30Status | CreditLimit | PurchaseHistory | ReceivedPurchases | EstSavings | PotentialSavings
--- 28         | Lakeside Garment Wholesale      | Inactive    | 50000.00    | 800.00          | 800.00            | 0.00       | 28.00
--- 32         | Royal Thread Supply            | Inactive    | 20000.00    | 600.00          | 600.00            | 0.00       | 21.00
--- 8          | Urban Thread Wholesale         | Inactive    | 50000.00    | 600.00          | 600.00            | 0.00       | 21.00
--- 36         | Brightline Textile Group       | Inactive    | 40000.00    | 400.00          | 400.00            | 0.00       | 14.00
--- 12         | Silverline Clothing Supply     | Inactive    | 20000.00    | 400.00          | 400.00            | 0.00       | 14.00
--- 16         | Valley Knitwear Supply         | Inactive    | 40000.00    | 400.00          | 400.00            | 0.00       | 14.00
--- 23         | Prime Stitch Textiles          | Active      | 25000.00    | 2062.50         | 2062.50           | 72.19      | 0.00
--- 22         | Harbor Fashion Wholesale       | Active      | 20000.00    | 1750.00         | 1750.00           | 61.25      | 0.00
--- 7          | Coastal Denim Distributors     | Active      | 45000.00    | 1512.50         | 1512.50           | 52.94      | 0.00
--- 31         | Skyline Apparel Trading        | Active      | 15000.00    | 1512.50         | 1512.50           | 52.94      | 0.00
--- 21         | Sterling Garment Distributors  | Active      | 15000.00    | 1462.50         | 1462.50           | 51.19      | 0.00
--- 11         | Liberty Textile Trading        | Active      | 15000.00    | 1312.50         | 1312.50           | 45.94      | 0.00
--- 6          | Summit Fashion Supply          | Active      | 40000.00    | 1250.00         | 1250.00           | 43.75      | 0.00
--- 43         | Crown Apparel Wholesale        | Active      | 25000.00    | 962.50          | 962.50            | 33.69      | 0.00
--- 33         | Frontier Clothing Wholesale    | Active      | 25000.00    | 812.50          | 812.50            | 28.44      | 0.00
--- 42         | Global Stitch Partners         | Active      | 20000.00    | 750.00          | 750.00            | 26.25      | 0.00
--- 38         | Horizon Fashion Wholesale      | Active      | 50000.00    | 750.00          | 750.00            | 26.25      | 0.00
--- 18         | Westbrook Apparel Group        | Active      | 50000.00    | 750.00          | 750.00            | 26.25      | 0.00
--- 3          | Evergreen Fabric Distributors  | Active      | 25000.00    | 612.50          | 612.50            | 21.44      | 0.00
--- 27         | Meridian Textile Supply        | Active      | 45000.00    | 612.50          | 612.50            | 21.44      | 0.00
--- 17         | Atlantic Fashion Trading       | Active      | 45000.00    | 562.50          | 562.50            | 19.69      | 0.00
--- 37         | Capital Garment Supply         | Active      | 45000.00    | 562.50          | 562.50            | 19.69      | 0.00
--- 13         | Oakwood Fashion Distributors   | Active      | 25000.00    | 562.50          | 562.50            | 19.69      | 0.00
--- 41         | Riverside Textile Trading      | Active      | 15000.00    | 562.50          | 562.50            | 19.69      | 0.00
--- 26         | Brookfield Clothing Partners   | Active      | 40000.00    | 450.00          | 450.00            | 15.75      | 0.00
--- 2          | Golden State Apparel Supply    | Active      | 20000.00    | 450.00          | 450.00            | 15.75      | 0.00
--- 1          | Pacific Cotton Textiles        | Active      | 15000.00    | 312.50          | 312.50            | 10.94      | 0.00
--- 29         | Aspire Fashion Distributors    | Active      | 55000.00    | 1012.50         | 0.00              | 0.00       | 0.00
--- 5          | Blue Ridge Textile Group       | Active      | 35000.00    | 1012.50         | 0.00              | 0.00       | 0.00
--- 24         | Canyon Apparel Supply          | Inactive    | 30000.00    | 200.00          | 0.00              | 0.00       | 0.00
--- 30         | Cedar Valley Textiles          | Active      | 10000.00    | 1250.00         | 0.00              | 0.00       | 0.00
--- 45         | Continental Fashion Textiles   | Active      | 35000.00    | 1462.50         | 0.00              | 0.00       | 0.00
--- 19         | Crescent Textile Partners      | Active      | 55000.00    | 962.50          | 0.00              | 0.00       | 0.00
--- 34         | Diamond Fabric Partners        | Active      | 30000.00    | 1050.00         | 0.00              | 0.00       | 0.00
--- 40         | Elite Cotton Distributors      | Inactive    | 10000.00    | 400.00          | 0.00              | 0.00       | 0.00
--- 25         | Grandview Fabric Company       | Active      | 35000.00    | 312.50          | 0.00              | 0.00       | 0.00
--- 9          | Heritage Garment Supply        | Active      | 55000.00    | 812.50          | 0.00              | 0.00       | 0.00
--- 35         | Maple Grove Apparel            | Active      | 35000.00    | 1312.50         | 0.00              | 0.00       | 0.00
--- 14         | Metro Garment Wholesale        | Active      | 30000.00    | 750.00          | 0.00              | 0.00       | 0.00
--- 4          | Northstar Clothing Wholesale   | Inactive    | 30000.00    | 800.00          | 0.00              | 0.00       | 0.00
--- 15         | Pioneer Cotton Company         | Active      | 35000.00    | 962.50          | 0.00              | 0.00       | 0.00
--- 44         | Premier Garment Supply         | Inactive    | 30000.00    | 1200.00         | 0.00              | 0.00       | 0.00
--- 20         | Redwood Clothing Supply        | Inactive    | 10000.00    | 1200.00         | 0.00              | 0.00       | 0.00
--- 39         | Stonebridge Clothing Supply    | Active      | 55000.00    | 962.50          | 0.00              | 0.00       | 0.00
--- 10         | Sunrise Apparel Partners       | Active      | 10000.00    | 1050.00         | 0.00              | 0.00       | 0.00
---
--- 45 rows selected.
-
+-- Expected output should be regenerated after testing the
+-- supplier-specific recorded savings and Net 30 eligibility.
