@@ -1,172 +1,440 @@
 SET TAB OFF
 SET SQLBLANKLINES ON
-SET LINESIZE 180
+SET DEFINE OFF
+SET LINESIZE 300
 SET PAGESIZE 100
+SET NUMWIDTH 12
+SET NULL 'NULL'
 
 -- ============================================================
--- Query 1: Identify product variants requiring restocking.
+-- Query 1: Complete inventory alert report
 --
--- Business question:
--- Which product variants have available inventory at or
--- below their reorder threshold, and how urgent is restocking?
+-- English question:
+-- Which variants are out of stock, at or below their reorder
+-- threshold, or at risk of stockout because their inventory
+-- cover is no greater than their supplier's standard lead time?
 --
--- Features: Multiple JOINs, CASE, calculated column, ORDER BY.
+-- Business Goal: 8
+--
+-- Features:
+-- Multiple JOINs, subqueries, CASE, SUM,
+-- GROUP BY, calculated columns, ORDER BY.
+--
 -- ============================================================
 
 COLUMN ProductName FORMAT A25
-COLUMN Brand FORMAT A18
-COLUMN StockStatus FORMAT A18
+COLUMN SupplierName FORMAT A30
+COLUMN StockStatus FORMAT A28
+COLUMN DailySalesVelocity FORMAT 999990.000
+COLUMN DaysInventoryCover FORMAT 999990.00
+
+SELECT
+    VariantID,
+    ProductName,
+    SupplierName,
+    AvailableStock,
+    ReorderThreshold,
+    UnitsLast30,
+    ROUND(UnitsLast30 / 30, 3) AS DailySalesVelocity,
+    ROUND(DaysCover, 2) AS DaysInventoryCover,
+    StandardLeadTime,
+    CASE
+        WHEN AvailableStock = 0
+            THEN 'OUT OF STOCK'
+        WHEN AvailableStock <= ReorderThreshold
+         AND DaysCover <= StandardLeadTime
+            THEN 'REORDER AND STOCKOUT RISK'
+        WHEN AvailableStock <= ReorderThreshold
+            THEN 'REORDER NEEDED'
+        ELSE 'STOCKOUT RISK'
+    END AS StockStatus
+FROM (
+    SELECT
+        pv.VariantID,
+        p.ProductName,
+        s.SupplierName,
+        i.PhysicalQuantity - i.AllocatedQuantity
+            AS AvailableStock,
+        i.ReorderThreshold,
+        s.StandardLeadTime,
+        NVL(RecentUnitsSold, 0) AS UnitsLast30,
+        (i.PhysicalQuantity - i.AllocatedQuantity) * 30
+            / NULLIF(RecentUnitsSold, 0) AS DaysCover
+    FROM F26_S001_T5_INVENTORY i
+    JOIN F26_S001_T5_PRODUCT_VARIANT pv
+        ON pv.VariantID = i.VariantID
+    JOIN F26_S001_T5_PRODUCT p
+        ON p.ProductID = pv.ProductID
+    JOIN F26_S001_T5_SUPPLIER s
+        ON s.SupplierID = pv.SupplierID
+    LEFT JOIN (
+        SELECT
+            oi.VariantID AS RecentSalesVariantID,
+            SUM(oi.Quantity) AS RecentUnitsSold
+        FROM F26_S001_T5_ORDER_ITEM oi
+        JOIN F26_S001_T5_AMAZON_ORDER ao
+            ON ao.OrderNumber = oi.OrderNumber
+        WHERE ao.OrderDate >= TRUNC(SYSDATE) - 30
+          AND ao.OrderDate < TRUNC(SYSDATE)
+        GROUP BY oi.VariantID
+    )
+        ON RecentSalesVariantID = pv.VariantID
+)
+WHERE AvailableStock = 0
+   OR AvailableStock <= ReorderThreshold
+   OR DaysCover <= StandardLeadTime
+ORDER BY AvailableStock, VariantID;
+
+-- Expected output (verified in Oracle Omega):
+--
+-- VariantID | ProductName             | SupplierName               | AvailableStock | ReorderThreshold | UnitsLast30 | DailySalesVelocity | DaysInventoryCover | StandardLeadTime | StockStatus
+-- 2012      | Formal Wrap Dress       | Silverline Clothing Supply | 20             | 25               | 0           | 0.000              | NULL               | 17               | REORDER NEEDED
+-- 2024      | Training Track Jacket   | Canyon Apparel Supply      | 20             | 35               | 0           | 0.000              | NULL               | 13               | REORDER NEEDED
+-- 2036      | Linen Button-Up Shirt   | Brightline Textile Group   | 20             | 20               | 0           | 0.000              | NULL               | 9                | REORDER NEEDED
+-- 2001      | Classic Cotton T-Shirt  | Pacific Cotton Textiles    | 27             | 30               | 0           | 0.000              | NULL               | 6                | REORDER NEEDED
+-- 2013      | Knit Sweater Dress      | Oakwood Fashion Distributors | 27           | 30               | 0           | 0.000              | NULL               | 18               | REORDER NEEDED
+-- 2014      | Maxi Evening Dress      | Metro Garment Wholesale    | 34             | 35               | 0           | 0.000              | NULL               | 19               | REORDER NEEDED
+--
+-- 6 rows selected.
+
+-- ============================================================
+-- Query 2: Monthly profitability by product category
+--
+-- English question:
+-- Which product categories are profitable each month after
+-- wholesale costs, Amazon fees, outbound shipping,
+-- customer refunds, and return-shipping costs?
+--
+-- Business Goal: 1
+--
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY, HAVING,
+-- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
+--
+-- ============================================================
 
 PROMPT
-PROMPT ===== QUERY 1: INVENTORY RESTOCKING ANALYSIS =====
+PROMPT ===== QUERY 2: MONTHLY CATEGORY PROFITABILITY =====
+
+COLUMN SalesMonth FORMAT A10
+COLUMN Category FORMAT A15
+COLUMN TotalOrders FORMAT 999990
+COLUMN UnitsSold FORMAT 999990
+COLUMN NetSales FORMAT 999999990.00
+COLUMN WholesaleCost FORMAT 999999990.00
+COLUMN AmazonFees FORMAT 9999990.00
+COLUMN ShippingCost FORMAT 9999990.00
+COLUMN ReturnRefunds FORMAT 999999990.00
+COLUMN ReturnShipping FORMAT 9999990.00
+COLUMN MissingCostLines FORMAT 999990
+COLUMN EstimatedNetContribution FORMAT 999999990.00
+
+SELECT
+    TO_CHAR(SalesMonth, 'YYYY-MM') AS SalesMonth,
+    Category,
+    COUNT(DISTINCT OrderNumber) AS TotalOrders,
+    SUM(Quantity) AS UnitsSold,
+    ROUND(SUM(NetSales), 2) AS NetSales,
+    CASE
+        WHEN COUNT(LineWholesaleCost) = COUNT(*)
+            THEN ROUND(SUM(LineWholesaleCost), 2)
+    END AS WholesaleCost,
+    CASE
+        WHEN COUNT(LineAmazonFees) = COUNT(*)
+            THEN ROUND(SUM(LineAmazonFees), 2)
+    END AS AmazonFees,
+    CASE
+        WHEN COUNT(LineShippingCost) = COUNT(*)
+            THEN ROUND(SUM(LineShippingCost), 2)
+    END AS ShippingCost,
+    ROUND(SUM(LineRefund), 2) AS ReturnRefunds,
+    ROUND(SUM(LineReturnShipping), 2) AS ReturnShipping,
+    SUM(MissingCostLine) AS MissingCostLines,
+    CASE
+        WHEN SUM(MissingCostLine) = 0
+            THEN ROUND(
+                SUM(
+                    NetSales
+                    - LineWholesaleCost
+                    - LineAmazonFees
+                    - LineShippingCost
+                    - LineRefund
+                    - LineReturnShipping
+                ),
+                2
+            )
+    END AS EstimatedNetContribution
+FROM (
+    SELECT
+        SalesMonth,
+        Category,
+        OrderNumber,
+        Quantity,
+        NetSales,
+        LineWholesaleCost,
+        AllocationShare * OrderAmazonFees AS LineAmazonFees,
+        AllocationShare * OrderShippingCost AS LineShippingCost,
+        LineRefund,
+        LineReturnShipping,
+        MissingCostLine
+    FROM (
+        SELECT
+            TRUNC(ao.OrderDate, 'MM') AS SalesMonth,
+            p.Category,
+            oi.OrderNumber,
+            oi.Quantity,
+            oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount AS NetSales,
+            oi.Quantity * AverageUnitCost AS LineWholesaleCost,
+            ao.AmazonReferralCost + ao.SubscriptionCost
+                AS OrderAmazonFees,
+            ao.ShippingCost AS OrderShippingCost,
+            NVL(r.RefundAmount, 0) AS LineRefund,
+            NVL(r.ReturnShippingCost, 0) AS LineReturnShipping,
+            CASE
+                WHEN AverageUnitCost IS NULL
+                  OR ao.AmazonReferralCost IS NULL
+                  OR ao.SubscriptionCost IS NULL
+                  OR ao.ShippingCost IS NULL
+                    THEN 1
+                ELSE 0
+            END AS MissingCostLine,
+            CASE
+                WHEN SUM(
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) OVER (
+                    PARTITION BY oi.OrderNumber
+                ) > 0
+                THEN (
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) / NULLIF(
+                    SUM(
+                        oi.Quantity * oi.SellingPricePerUnit
+                        - oi.Discount
+                    ) OVER (
+                        PARTITION BY oi.OrderNumber
+                    ),
+                    0
+                )
+                ELSE oi.Quantity / SUM(oi.Quantity) OVER (
+                    PARTITION BY oi.OrderNumber
+                )
+            END AS AllocationShare
+        FROM F26_S001_T5_ORDER_ITEM oi
+        JOIN F26_S001_T5_AMAZON_ORDER ao
+            ON ao.OrderNumber = oi.OrderNumber
+        JOIN F26_S001_T5_PRODUCT_VARIANT pv
+            ON pv.VariantID = oi.VariantID
+        JOIN F26_S001_T5_PRODUCT p
+            ON p.ProductID = pv.ProductID
+        LEFT JOIN (
+            SELECT
+                pod.VariantID AS CostVariantID,
+                SUM(
+                    pod.OrderedQuantity * pod.CostPerUnit
+                    - pod.Discount
+                ) / SUM(pod.OrderedQuantity)
+                    AS AverageUnitCost
+            FROM F26_S001_T5_PURCHASE_ORDER_DETAIL pod
+            JOIN F26_S001_T5_PURCHASE_ORDER po
+                ON po.PurchaseOrderID = pod.PurchaseOrderID
+            WHERE po.Status = 'Received'
+            GROUP BY pod.VariantID
+        )
+            ON CostVariantID = oi.VariantID
+        LEFT JOIN F26_S001_T5_RETURN r
+            ON r.OrderNumber = oi.OrderNumber
+           AND r.LineItemNumber = oi.LineItemNumber
+    )
+)
+GROUP BY SalesMonth, Category
+HAVING SUM(Quantity) > 0
+ORDER BY SalesMonth, Category;
+
+-- Expected output (verified in Oracle Omega):
+--
+-- SalesMonth | Category    | TotalOrders | UnitsSold | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | MissingCostLines | EstimatedNetContribution
+-- 2026-03    | Bottoms     | 3           | 6         | 241.14   | 170.00        | 39.15      | 24.97        | 236.14        | 9.98           | 0                | -239.10
+-- 2026-03    | Tops        | 5           | 11        | 293.29   | NULL          | 48.95      | 38.95        | 283.29        | 19.96          | 2                | NULL
+-- 2026-04    | Bottoms     | 2           | 3         | 112.47   | NULL          | 18.85      | 15.98        | 109.97        | 4.99           | 2                | NULL
+-- 2026-04    | Dresses     | 5           | 10        | 575.00   | NULL          | 91.21      | 42.95        | 562.50        | 24.95          | 2                | NULL
+-- 2026-04    | Outerwear   | 1           | 2         | 134.98   | 40.00         | 21.24      | 4.99         | 134.98        | 0.00           | 0                | -66.23
+-- 2026-05    | Activewear  | 3           | 6         | 168.24   | 215.00        | 28.21      | 26.97        | 160.74        | 14.97          | 0                | -277.65
+-- 2026-05    | Outerwear   | 4           | 9         | 1259.91  | NULL          | 192.96     | 31.96        | 1252.41       | 14.97          | 2                | NULL
+-- 2026-06    | Activewear  | 2           | 3         | 134.97   | NULL          | 22.23      | 11.98        | 132.47        | 4.99           | 2                | NULL
+-- 2026-06    | Sleepwear   | 5           | 10        | 325.70   | NULL          | 53.80      | 40.95        | 315.70        | 19.96          | 2                | NULL
+-- 2026-06    | Underwear   | 1           | 2         | 53.98    | 55.00         | 9.09       | 10.99        | 51.48         | 4.99           | 0                | -77.57
+-- 2026-07    | Accessories | 3           | 6         | 139.44   | NULL          | 23.89      | 26.97        | 134.44        | 9.98           | 2                | NULL
+-- 2026-07    | Activewear  | 1           | 1         | 53.99    | NULL          | 9.09       | 10.99        | 51.49         | 4.99           | 1                | NULL
+-- 2026-07    | Bottoms     | 1           | 3         | 126.87   | 45.00         | 20.02      | 8.99         | 124.37        | 4.99           | 0                | -76.50
+-- 2026-07    | Tops        | 2           | 3         | 89.07    | 35.00         | 15.34      | 11.98        | 84.07         | 9.98           | 0                | -67.30
+-- 2026-07    | Underwear   | 1           | 3         | 67.47    | 90.00         | 11.11      | 4.99         | 67.47         | 0.00           | 0                | -106.10
+-- 2026-08    | Activewear  | 1           | 1         | 44.99    | NULL          | 7.74       | 6.99         | 42.49         | 4.99           | 1                | NULL
+-- 2026-08    | Bottoms     | 2           | 5         | 263.65   | NULL          | 41.53      | 15.98        | 258.65        | 9.98           | 1                | NULL
+-- 2026-08    | Outerwear   | 1           | 2         | 251.98   | NULL          | 38.79      | 4.99         | 251.98        | 0.00           | 1                | NULL
+-- 2026-08    | Tops        | 2           | 4         | 321.26   | 92.50         | 50.17      | 15.98        | 318.76        | 4.99           | 0                | -161.14
+--
+-- 19 rows selected.
+
+-- ============================================================
+-- Query 3: Return rates and return-reason breakdown.
+--
+-- English question:
+-- What percentage of sold order lines were returned for each
+-- product variant, identified by product, brand, category,
+-- size, and color? What share of its returns had each reason?
+--
+-- Business Goals: 2 and 3
+--
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY, HAVING,
+-- COUNT, SUM, LIKE, CASE, OVER, and ORDER BY.
+--
+-- ============================================================
+PROMPT
+PROMPT ===== QUERY 3: RETURN RATES AND REASONS =====
+
+COLUMN ProductName FORMAT A28
+COLUMN Brand FORMAT A18
+COLUMN Category FORMAT A15
+COLUMN VariantSize FORMAT A11
+COLUMN Color FORMAT A10
+COLUMN ReturnRatePct FORMAT 990.00
+COLUMN ReturnReason FORMAT A22
+COLUMN ReasonPct FORMAT 990.00
+COLUMN SizeFitFlag FORMAT A11
 
 SELECT
     pv.VariantID,
     p.ProductName,
     p.Brand,
-    i.PhysicalQuantity,
-    i.AllocatedQuantity,
-    (i.PhysicalQuantity - i.AllocatedQuantity) AS AvailableStock,
-    i.ReorderThreshold,
-    CASE
-        WHEN (i.PhysicalQuantity - i.AllocatedQuantity) = 0
-            THEN 'OUT OF STOCK'
-        WHEN (i.PhysicalQuantity - i.AllocatedQuantity) <= i.ReorderThreshold
-            THEN 'REORDER NEEDED'
-        ELSE 'SUFFICIENT'
-    END AS StockStatus
-FROM F26_S001_T5_INVENTORY i
-JOIN F26_S001_T5_PRODUCT_VARIANT pv
-    ON i.VariantID = pv.VariantID
-JOIN F26_S001_T5_PRODUCT p
-    ON pv.ProductID = p.ProductID
-WHERE (i.PhysicalQuantity - i.AllocatedQuantity) <= i.ReorderThreshold
-ORDER BY AvailableStock ASC, pv.VariantID;
-
--- Expected output (verified in Oracle Omega, current database):
--- VariantID | ProductName             | AvailableStock | ReorderThreshold | StockStatus
--- 2012      | Formal Wrap Dress       | 20             | 25               | REORDER NEEDED
--- 2024      | Training Track Jacket   | 20             | 35               | REORDER NEEDED
--- 2036      | Linen Button-Up Shirt   | 20             | 20               | REORDER NEEDED
--- 2001      | Classic Cotton T-Shirt  | 27             | 30               | REORDER NEEDED
--- 2013      | Knit Sweater Dress      | 27             | 30               | REORDER NEEDED
--- 2014      | Maxi Evening Dress      | 34             | 35               | REORDER NEEDED
--- 6 rows selected.
-
--- ============================================================
--- Query 2: Sales performance by product category.
---
--- Business question:
--- Which product categories have sold at least 5 units,
--- and what are their total sales and average selling price?
---
--- Features: Multiple JOINs, SUM, AVG, COUNT,
---           GROUP BY, HAVING, ORDER BY.
--- ============================================================
-
-PROMPT
-PROMPT ===== QUERY 2: SALES BY PRODUCT CATEGORY =====
-
-COLUMN Category FORMAT A20
-COLUMN TotalRevenue FORMAT 9999990.00
-COLUMN AverageSellingPrice FORMAT 999990.00
-
-SELECT
     p.Category,
-    COUNT(DISTINCT oi.OrderNumber) AS TotalOrders,
-    SUM(oi.Quantity) AS TotalUnitsSold,
-    ROUND(SUM(
-        oi.Quantity * oi.SellingPricePerUnit - oi.Discount
-    ), 2) AS TotalRevenue,
+    pv.VariantSize,
+    pv.Color,
     ROUND(
-        SUM(oi.Quantity * oi.SellingPricePerUnit)
-        / NULLIF(SUM(oi.Quantity), 0),
+        100 * ReturnedLines / NULLIF(SoldLines, 0),
         2
-    ) AS AverageSellingPrice
-FROM F26_S001_T5_ORDER_ITEM oi
-JOIN F26_S001_T5_PRODUCT_VARIANT pv
-    ON oi.VariantID = pv.VariantID
+    ) AS ReturnRatePct,
+    CASE
+        WHEN ReasonCount IS NULL THEN 'NO RETURNS'
+        ELSE RecordedReason
+    END AS ReturnReason,
+    ROUND(
+        100 * NVL(ReasonCount, 0)
+        / NULLIF(
+            SUM(NVL(ReasonCount, 0)) OVER (
+                PARTITION BY pv.VariantID
+            ),
+            0
+        ),
+        2
+    ) AS ReasonPct,
+    CASE
+        WHEN LOWER(RecordedReason) LIKE '%size%'
+          OR LOWER(RecordedReason) LIKE '%fit%'
+            THEN 'YES'
+        ELSE 'NO'
+    END AS SizeFitFlag
+FROM F26_S001_T5_PRODUCT_VARIANT pv
 JOIN F26_S001_T5_PRODUCT p
-    ON pv.ProductID = p.ProductID
-GROUP BY p.Category
-HAVING SUM(oi.Quantity) >= 5
-ORDER BY TotalRevenue DESC;
-
--- Expected output (verified in Oracle Omega, current database):
--- Category     | TotalOrders | TotalUnitsSold | TotalRevenue | AverageSellingPrice
--- Outerwear    | 6           | 13             | 1646.87      | 126.68
--- Bottoms      | 8           | 17             | 744.13       | 43.77
--- Tops         | 9           | 18             | 703.62       | 39.09
--- Dresses      | 5           | 10             | 575.00       | 57.50
--- Activewear   | 7           | 11             | 402.19       | 36.56
--- Sleepwear    | 5           | 10             | 325.70       | 32.57
--- Accessories  | 3           | 6              | 139.44       | 23.24
--- Underwear    | 2           | 5              | 121.45       | 24.29
--- 8 rows selected.
-
--- ============================================================
--- Query 3: Return reasons related to size or fit.
---
--- English:
--- For each product category, brand, and recorded return reason
--- containing "size" or "fit", show the number of return records
--- and total refund amount. Include groups with at least one
--- return and list the most frequent reasons first.
---
--- Features: Multiple JOINs, LIKE, GROUP BY, HAVING, aggregates.
--- ============================================================
-
-PROMPT
-PROMPT ===== QUERY 3: SIZE AND FIT RETURN REASONS =====
-
-COLUMN Category FORMAT A18
-COLUMN Brand FORMAT A20
-COLUMN ReturnReason FORMAT A40
-COLUMN ReturnCount FORMAT 999990
-COLUMN TotalRefund FORMAT 9999990.00
-
-SELECT
+    ON p.ProductID = pv.ProductID
+JOIN (
+    SELECT
+        oi.VariantID AS SalesVariantID,
+        COUNT(*) AS SoldLines,
+        COUNT(r.ReturnNumber) AS ReturnedLines
+    FROM F26_S001_T5_ORDER_ITEM oi
+    LEFT JOIN F26_S001_T5_RETURN r
+        ON r.OrderNumber = oi.OrderNumber
+       AND r.LineItemNumber = oi.LineItemNumber
+    GROUP BY oi.VariantID
+    HAVING COUNT(*) > 0
+)
+    ON SalesVariantID = pv.VariantID
+LEFT JOIN (
+    SELECT
+        oi.VariantID AS ReasonVariantID,
+        NVL(r.Reason, 'Unspecified') AS RecordedReason,
+        COUNT(r.ReturnNumber) AS ReasonCount
+    FROM F26_S001_T5_RETURN r
+    JOIN F26_S001_T5_ORDER_ITEM oi
+        ON oi.OrderNumber = r.OrderNumber
+       AND oi.LineItemNumber = r.LineItemNumber
+    GROUP BY
+        oi.VariantID,
+        NVL(r.Reason, 'Unspecified')
+)
+    ON ReasonVariantID = pv.VariantID
+ORDER BY
     p.Category,
     p.Brand,
-    r.Reason AS ReturnReason,
-    COUNT(*) AS ReturnCount,
-    ROUND(SUM(r.RefundAmount), 2) AS TotalRefund
-FROM F26_S001_T5_RETURN r
-JOIN F26_S001_T5_ORDER_ITEM oi
-    ON r.OrderNumber = oi.OrderNumber
-   AND r.LineItemNumber = oi.LineItemNumber
-JOIN F26_S001_T5_PRODUCT_VARIANT pv
-    ON oi.VariantID = pv.VariantID
-JOIN F26_S001_T5_PRODUCT p
-    ON pv.ProductID = p.ProductID
-WHERE LOWER(r.Reason) LIKE '%size%'
-   OR LOWER(r.Reason) LIKE '%fit%'
-GROUP BY p.Category, p.Brand, r.Reason
-HAVING COUNT(*) >= 1
-ORDER BY ReturnCount DESC, TotalRefund DESC,
-         p.Category, p.Brand, r.Reason;
+    p.ProductName,
+    pv.VariantID,
+    ReasonCount DESC,
+    ReturnReason;
 
 -- Expected output (verified in Oracle Omega, current database):
--- Category    | Brand              | ReturnReason | ReturnCount | TotalRefund
--- Outerwear   | The North Face     | Wrong Size   | 1           | 483.47
--- Tops        | Lands' End         | Wrong Size   | 1           | 294.47
--- Activewear  | Nike               | Wrong Size   | 1           | 69.48
--- Tops        | Amazon Essentials  | Wrong Size   | 1           | 33.48
--- Bottoms     | Wrangler           | Wrong Size   | 1           | 27.19
--- Accessories | Fruit of the Loom  | Wrong Size   | 1           | 14.59
--- 6 rows selected.
-
+-- VariantID | ProductName                  | Brand             | Category    | VariantSize | Color | ReturnRatePct | ReturnReason     | ReasonPct | SizeFitFlag
+-- 2034      | Winter Knit Beanie           | Carhartt          | Accessories | L           | Gray  | 100.00        | Item Damaged     | 100.00    | NO
+-- 2035      | Leather Casual Belt          | Dockers           | Accessories | XL          | Blue  | 100.00        | Not As Described | 100.00    | NO
+-- 2033      | Everyday Crew Socks          | Fruit of the Loom | Accessories | M           | Navy  | 100.00        | Wrong Size       | 100.00    | YES
+-- 2024      | Training Track Jacket        | Adidas            | Activewear  | L           | Gray  | 100.00        | Defective Item   | 100.00    | NO
+-- 2023      | Yoga Sports Bra              | CRZ Yoga          | Activewear  | M           | Navy  | 100.00        | Arrived Late     | 100.00    | NO
+-- 2045      | Thermal Base Layer Top       | Columbia          | Activewear  | XL          | Blue  | 100.00        | Wrong Color      | 100.00    | NO
+-- 2021      | Fleece Jogger Pants          | Hanes             | Activewear  | XS          | Black | 100.00        | Wrong Color      | 100.00    | NO
+-- 2039      | Athletic Running Leggings    | Nike              | Activewear  | 32          | Brown | 100.00        | Arrived Late     | 100.00    | NO
+-- 2025      | Workout Training Tee         | Nike              | Activewear  | XL          | Blue  | 100.00        | Wrong Size       | 100.00    | YES
+-- 2022      | Running Compression Shorts   | Under Armour      | Activewear  | S           | White | 100.00        | Poor Quality     | 100.00    | NO
+-- 2038      | Corduroy Trousers            | Amazon Essentials | Bottoms     | 30          | Beige | 100.00        | Poor Quality     | 100.00    | NO
+-- 2008      | High Rise Leggings           | CRZ Yoga          | Bottoms     | 30          | Beige | 100.00        | Defective Item   | 100.00    | NO
+-- 2044      | Faux Leather Skirt           | Calvin Klein      | Bottoms     | L           | Gray  | 100.00        | Changed Mind     | 100.00    | NO
+-- 2007      | Slim Fit Chinos              | Dockers           | Bottoms     | One Size    | Green | 100.00        | Arrived Late     | 100.00    | NO
+-- 2006      | Straight Leg Jeans           | Levi's            | Bottoms     | XXL         | Red   | 100.00        | Poor Quality     | 100.00    | NO
+-- 2010      | Pleated Midi Skirt           | The Drop          | Bottoms     | 34          | Pink  | 100.00        | Item Damaged     | 100.00    | NO
+-- 2043      | Wide Leg Palazzo Pants       | The Drop          | Bottoms     | M           | Navy  | 100.00        | Not As Described | 100.00    | NO
+-- 2009      | Cargo Shorts                 | Wrangler          | Bottoms     | 32          | Brown | 100.00        | Wrong Size       | 100.00    | YES
+-- 2013      | Knit Sweater Dress           | ANRABESS          | Dresses     | M           | Navy  | 100.00        | Wrong Color      | 100.00    | NO
+-- 2011      | Floral Summer Dress          | Amazon Essentials | Dresses     | XS          | Black | 100.00        | Not As Described | 100.00    | NO
+-- 2012      | Formal Wrap Dress            | Calvin Klein      | Dresses     | S           | White | 100.00        | Changed Mind     | 100.00    | NO
+-- 2014      | Maxi Evening Dress           | Ever-Pretty       | Dresses     | L           | Gray  | 100.00        | Poor Quality     | 100.00    | NO
+-- 2015      | Denim Shirt Dress            | Levi's            | Dresses     | XL          | Blue  | 100.00        | Arrived Late     | 100.00    | NO
+-- 2040      | Quilted Bomber Jacket        | Alpha Industries  | Outerwear   | 34          | Pink  | 100.00        | Defective Item   | 100.00    | NO
+-- 2020      | Wool Blend Overcoat          | Calvin Klein      | Outerwear   | 34          | Pink  | 100.00        | Changed Mind     | 100.00    | NO
+-- 2016      | Lightweight Windbreaker      | Columbia          | Outerwear   | XXL         | Red   | 100.00        | Defective Item   | 100.00    | NO
+-- 2019      | Waterproof Raincoat          | Columbia          | Outerwear   | 32          | Brown | 100.00        | Not As Described | 100.00    | NO
+-- 2018      | Classic Denim Jacket         | Levi's            | Outerwear   | 30          | Beige | 100.00        | Item Damaged     | 100.00    | NO
+-- 2017      | Puffer Winter Jacket         | The North Face    | Outerwear   | One Size    | Green | 100.00        | Wrong Size       | 100.00    | YES
+-- 2026      | Cotton Pajama Set            | Amazon Essentials | Sleepwear   | XXL         | Red   | 100.00        | Item Damaged     | 100.00    | NO
+-- 2027      | Satin Nightgown              | Ekouaer           | Sleepwear   | One Size    | Green | 100.00        | Not As Described | 100.00    | NO
+-- 2030      | Thermal Sleep Set            | Fruit of the Loom | Sleepwear   | 34          | Pink  | 100.00        | Poor Quality     | 100.00    | NO
+-- 2028      | Fleece Lounge Pants          | Hanes             | Sleepwear   | 30          | Beige | 100.00        | Changed Mind     | 100.00    | NO
+-- 2029      | Flannel Pajama Shirt         | Lands' End        | Sleepwear   | 32          | Brown | 100.00        | Wrong Color      | 100.00    | NO
+-- 2001      | Classic Cotton T-Shirt       | Amazon Essentials | Tops        | XS          | Black | 100.00        | Wrong Size       | 100.00    | YES
+-- 2005      | Ribbed Tank Top              | Amazon Essentials | Tops        | XL          | Blue  | 100.00        | Wrong Color      | 100.00    | NO
+-- 2037      | Oversized Graphic Tee        | Champion          | Tops        | One Size    | Green | 100.00        | Wrong Color      | 100.00    | NO
+-- 2036      | Linen Button-Up Shirt        | Goodthreads       | Tops        | XXL         | Red   | 100.00        | Changed Mind     | 100.00    | NO
+-- 2002      | Slim Fit Oxford Shirt        | Goodthreads       | Tops        | S           | White | 100.00        | Item Damaged     | 100.00    | NO
+-- 2042      | Cotton Henley Shirt          | Hanes             | Tops        | S           | White | 100.00        | Item Damaged     | 100.00    | NO
+-- 2003      | Relaxed Fit Hoodie           | Hanes             | Tops        | M           | Navy  | 100.00        | Not As Described | 100.00    | NO
+-- 2041      | Cashmere Blend Sweater       | Lands' End        | Tops        | XS          | Black | 100.00        | Wrong Size       | 100.00    | YES
+-- 2004      | Performance Polo Shirt       | Under Armour      | Tops        | L           | Gray  | 100.00        | Changed Mind     | 100.00    | NO
+-- 2031      | Cotton Boxer Briefs          | Calvin Klein      | Underwear   | XS          | Black | 100.00        | Arrived Late     | 100.00    | NO
+-- 2032      | Seamless Briefs              | Hanes             | Underwear   | S           | White | 100.00        | Defective Item   | 100.00    | NO
+--
+-- 45 rows selected.
+--
 -- ============================================================
 -- Query 4: Monthly category sales with subtotals.
 --
--- English:
+-- English question:
 -- Show net sales revenue and units sold for each month and
 -- product category, followed by each month's subtotal and
 -- an overall grand total.
 --
 -- Features: Multiple JOINs, ROLLUP, GROUPING, CASE, aggregates.
 -- ============================================================
-
 PROMPT
 PROMPT ===== QUERY 4: MONTHLY CATEGORY SALES ROLLUP =====
 
@@ -243,7 +511,7 @@ ORDER BY
 -- ============================================================
 -- Query 5: Supplier purchase-history coverage.
 --
--- English:
+-- English question:
 -- Find suppliers for whom every product variant assigned to
 -- that supplier has appeared in at least one received purchase
 -- order issued to that same supplier.
@@ -321,13 +589,15 @@ ORDER BY s.SupplierName, s.SupplierID;
 -- ============================================================
 -- Query 6: Top three revenue ranks of variants each month.
 --
--- English:
+-- Business Goal: 6
+--
+-- English question:
 -- Calculate each product variant's monthly units sold and
 -- net revenue. Rank variants within each month by net revenue
 -- and show the top three distinct revenue ranks, including ties.
 -- Also show each variant's percentage of that month's revenue.
 --
--- Features: Multiple JOINs, CTEs, GROUP BY, DENSE_RANK OVER,
+-- Features: Multiple JOINs, GROUP BY, DENSE_RANK OVER,
 --           SUM OVER, nested filtering.
 -- ============================================================
 
@@ -477,20 +747,19 @@ FETCH FIRST 5 ROWS ONLY;
 -- 5 rows selected.
 
 -- ============================================================
--- Query 8: Return cost analysis by category and brand.
+-- Query 8: Return cost analysis by category and brand
 --
--- English:
--- Calculate the number of returns, total refunds,
--- total return shipping costs, total restocking fees,
--- and net return-related cost for each product category
--- and brand. Display the ten groups with the highest
--- net return-related costs.
+-- English question:
+-- Which ten category and brand groups have the highest
+-- return-related costs? Show return counts, total refunds,
+-- return-shipping costs, and restocking fees.
 --
--- Net Return Cost = Refund Amount
---                  + Return Shipping Cost
---                  - Restocking Fee
+-- Business Goals:
+-- Supports Goal 3's return analysis and the return-cost
+-- components of Goals 1, 7, and 11.
 --
--- Features: Multiple JOINs, GROUP BY, aggregate functions,
+-- Features:
+-- Multiple JOINs, GROUP BY, COUNT, SUM,
 -- calculated column, ORDER BY, FETCH FIRST.
 -- ============================================================
 
@@ -501,8 +770,8 @@ COLUMN Category FORMAT A18
 COLUMN Brand FORMAT A22
 COLUMN ReturnCount FORMAT 999990
 COLUMN TotalRefund FORMAT 9999990.00
-COLUMN ReturnShipping FORMAT 999990.00
-COLUMN RestockingFees FORMAT 999990.00
+COLUMN ReturnShipping FORMAT 9999990.00
+COLUMN RestockingFees FORMAT 9999990.00
 COLUMN NetReturnCost FORMAT 9999990.00
 
 SELECT
@@ -513,11 +782,7 @@ SELECT
     ROUND(SUM(r.ReturnShippingCost), 2) AS ReturnShipping,
     ROUND(SUM(r.RestockingFee), 2) AS RestockingFees,
     ROUND(
-        SUM(
-            r.RefundAmount
-            + r.ReturnShippingCost
-            - r.RestockingFee
-        ),
+        SUM(r.RefundAmount + r.ReturnShippingCost),
         2
     ) AS NetReturnCost
 FROM F26_S001_T5_RETURN r
@@ -537,141 +802,178 @@ ORDER BY
     p.Brand
 FETCH FIRST 10 ROWS ONLY;
 
--- Expected output (initial populated database, before updates; verified in Oracle Omega):
--- CATEGORY    BRAND                 RETURNCOUNT TOTALREFUND RETURNSHIPPING RESTOCKINGFEES NETRETURNCOST
--- Outerwear   Calvin Klein          1           510.47      4.99           2.50           512.96
--- Outerwear   The North Face        1           483.47      4.99           2.50           485.96
--- Outerwear   Columbia              2           312.46      4.99           2.50           314.95
--- Tops        Lands' End            1           294.47      4.99           2.50           296.96
--- Outerwear   Alpha Industries      1           251.98      0.00           0.00           251.98
--- Dresses     Ever-Pretty           1           213.47      4.99           2.50           215.96
--- Bottoms     Calvin Klein          1           172.97      4.99           2.50           175.46
--- Bottoms     The Drop              2           168.46      4.99           2.50           170.95
--- Tops        Goodthreads           2           130.66      4.99           2.50           133.15
--- Bottoms     Amazon Essentials     1           124.37      4.99           2.50           126.86
+-- Expected output (verified in Oracle Omega):
+--
+-- Category   | Brand            | ReturnCount | TotalRefund | ReturnShipping | RestockingFees | NetReturnCost
+-- Outerwear  | Calvin Klein     | 1           | 510.47      | 4.99           | 2.50           | 515.46
+-- Outerwear  | The North Face   | 1           | 483.47      | 4.99           | 2.50           | 488.46
+-- Outerwear  | Columbia         | 2           | 312.46      | 4.99           | 2.50           | 317.45
+-- Tops       | Lands' End       | 1           | 294.47      | 4.99           | 2.50           | 299.46
+-- Outerwear  | Alpha Industries | 1           | 251.98      | 0.00           | 0.00           | 251.98
+-- Dresses    | Ever-Pretty      | 1           | 213.47      | 4.99           | 2.50           | 218.46
+-- Bottoms    | Calvin Klein     | 1           | 172.97      | 4.99           | 2.50           | 177.96
+-- Bottoms    | The Drop         | 2           | 168.46      | 4.99           | 2.50           | 173.45
+-- Tops       | Goodthreads      | 2           | 130.66      | 4.99           | 2.50           | 135.65
+-- Activewear | Nike             | 2           | 120.97      | 9.98           | 5.00           | 130.95
+--
 -- 10 rows selected.
 
 -- ============================================================
--- Query 9: Supplier delivery performance analysis.
+-- Query 9: Supplier performance summary
 --
--- English:
--- Analyze supplier performance by displaying total purchase
--- orders, received orders, shipped orders, pending orders,
--- on-time deliveries, late deliveries, on-time delivery
--- percentage, and average days late.
+-- English question:
+-- How do suppliers compare on delivery reliability, actual
+-- lead time, purchase history, customer-return rates,
+-- Net 30 status, and credit limits?
 --
--- Delivery performance is calculated only for received orders.
+-- Business Goal: 4
 --
--- Features: JOIN, GROUP BY, aggregate functions, CASE,
---           calculated percentage, ORDER BY.
+-- Features:
+-- Multiple JOINs, aggregated subqueries, GROUP BY,
+-- COUNT, SUM, AVG, CASE, calculated percentages, ORDER BY.
 -- ============================================================
 
 PROMPT
-PROMPT ===== QUERY 9: SUPPLIER DELIVERY PERFORMANCE =====
+PROMPT ===== QUERY 9: SUPPLIER PERFORMANCE SUMMARY =====
 
-COLUMN SupplierName FORMAT A32
-COLUMN OnTimePercentage FORMAT 990.00
-COLUMN AverageDaysLate FORMAT 990.00
+COLUMN SupplierName FORMAT A30
+COLUMN Net30Status FORMAT A11
+COLUMN CreditLimit FORMAT 9999990.00
+COLUMN ReceivedOrders FORMAT 999990
+COLUMN OnTimePct FORMAT 990.00
+COLUMN AvgLeadDays FORMAT 9990.00
+COLUMN PurchaseHistory FORMAT 999999990.00
+COLUMN ReceivedValue FORMAT 999999990.00
+COLUMN ReturnRatePct FORMAT 990.00
 
 SELECT
     s.SupplierID,
     s.SupplierName,
-    COUNT(po.PurchaseOrderID) AS TotalOrders,
-    SUM(CASE WHEN po.Status = 'Received' THEN 1 ELSE 0 END)
-        AS ReceivedOrders,
-    SUM(CASE WHEN po.Status = 'Shipped' THEN 1 ELSE 0 END)
-        AS ShippedOrders,
-    SUM(CASE WHEN po.Status = 'Pending' THEN 1 ELSE 0 END)
-        AS PendingOrders,
-    SUM(CASE
-        WHEN po.Status = 'Received'
-         AND po.DateReceived <= po.EstimatedDeliveryDate
-        THEN 1 ELSE 0
-    END) AS OnTimeOrders,
-    SUM(CASE
-        WHEN po.Status = 'Received'
-         AND po.DateReceived > po.EstimatedDeliveryDate
-        THEN 1 ELSE 0
-    END) AS LateOrders,
+    s.Net30Status,
+    s.CreditLimit,
+    NVL(CompletedOrders, 0) AS ReceivedOrders,
     ROUND(
-        100 * SUM(CASE
-            WHEN po.Status = 'Received'
-             AND po.DateReceived <= po.EstimatedDeliveryDate
-            THEN 1 ELSE 0
-        END)
-        / NULLIF(SUM(CASE
-            WHEN po.Status = 'Received' THEN 1 ELSE 0
-        END), 0),
+        100 * OnTimeOrders / NULLIF(AssessableOrders, 0),
         2
-    ) AS OnTimePercentage,
+    ) AS OnTimePct,
+    ROUND(ActualLeadDays, 2) AS AvgLeadDays,
+    NVL(TotalOrderedValue, 0) AS PurchaseHistory,
+    NVL(CompletedValue, 0) AS ReceivedValue,
     ROUND(
-        AVG(CASE
-            WHEN po.Status = 'Received'
-            THEN GREATEST(
-                po.DateReceived - po.EstimatedDeliveryDate,
-                0
-            )
-        END),
+        100 * ReturnedLines / NULLIF(SoldLines, 0),
         2
-    ) AS AverageDaysLate
+    ) AS ReturnRatePct
 FROM F26_S001_T5_SUPPLIER s
-JOIN F26_S001_T5_PURCHASE_ORDER po
-    ON s.SupplierID = po.SupplierID
-GROUP BY
-    s.SupplierID,
-    s.SupplierName
+LEFT JOIN (
+    SELECT
+        po.SupplierID AS PurchaseSupplierID,
+        SUM(
+            CASE
+                WHEN po.Status = 'Received' THEN 1
+                ELSE 0
+            END
+        ) AS CompletedOrders,
+        SUM(
+            CASE
+                WHEN po.Status = 'Received'
+                 AND po.EstimatedDeliveryDate IS NOT NULL
+                    THEN 1
+                ELSE 0
+            END
+        ) AS AssessableOrders,
+        SUM(
+            CASE
+                WHEN po.Status = 'Received'
+                 AND po.DateReceived <= po.EstimatedDeliveryDate
+                    THEN 1
+                ELSE 0
+            END
+        ) AS OnTimeOrders,
+        AVG(
+            CASE
+                WHEN po.Status = 'Received'
+                    THEN po.DateReceived - po.DatePlaced
+            END
+        ) AS ActualLeadDays,
+        SUM(po.TotalCost) AS TotalOrderedValue,
+        SUM(
+            CASE
+                WHEN po.Status = 'Received'
+                    THEN po.TotalCost
+                ELSE 0
+            END
+        ) AS CompletedValue
+    FROM F26_S001_T5_PURCHASE_ORDER po
+    GROUP BY po.SupplierID
+)
+    ON PurchaseSupplierID = s.SupplierID
+LEFT JOIN (
+    SELECT
+        pv.SupplierID AS ReturnSupplierID,
+        COUNT(oi.LineItemNumber) AS SoldLines,
+        COUNT(r.ReturnNumber) AS ReturnedLines
+    FROM F26_S001_T5_PRODUCT_VARIANT pv
+    LEFT JOIN F26_S001_T5_ORDER_ITEM oi
+        ON oi.VariantID = pv.VariantID
+    LEFT JOIN F26_S001_T5_RETURN r
+        ON r.OrderNumber = oi.OrderNumber
+       AND r.LineItemNumber = oi.LineItemNumber
+    GROUP BY pv.SupplierID
+)
+    ON ReturnSupplierID = s.SupplierID
 ORDER BY
-    LateOrders DESC,
-    AverageDaysLate DESC,
+    OnTimePct DESC NULLS LAST,
+    AvgLeadDays ASC NULLS LAST,
     s.SupplierName;
 
--- Expected output (initial populated database, before updates; verified in Oracle Omega):
--- SupplierID | SupplierName                    | Total | Received | Shipped | Pending | OnTime | Late | OnTime% | AvgDaysLate
---  29 | Aspire Fashion Distributors      | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---   5 | Blue Ridge Textile Group         | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  24 | Canyon Apparel Supply            | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  30 | Cedar Valley Textiles            | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  45 | Continental Fashion Textiles     | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  19 | Crescent Textile Partners        | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  34 | Diamond Fabric Partners          | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  40 | Elite Cotton Distributors        | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  25 | Grandview Fabric Company         | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---   9 | Heritage Garment Supply          | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  35 | Maple Grove Apparel              | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  14 | Metro Garment Wholesale          | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---   4 | Northstar Clothing Wholesale     | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  15 | Pioneer Cotton Company           | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  44 | Premier Garment Supply           | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  20 | Redwood Clothing Supply          | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  39 | Stonebridge Clothing Supply      | 1 | 0 | 1 | 0 | 0 | 0 | NULL | NULL
---  10 | Sunrise Apparel Partners         | 1 | 0 | 0 | 1 | 0 | 0 | NULL | NULL
---  17 | Atlantic Fashion Trading         | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  36 | Brightline Textile Group         | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  26 | Brookfield Clothing Partners     | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  37 | Capital Garment Supply           | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   7 | Coastal Denim Distributors       | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  43 | Crown Apparel Wholesale          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   3 | Evergreen Fabric Distributors    | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  33 | Frontier Clothing Wholesale      | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  42 | Global Stitch Partners           | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   2 | Golden State Apparel Supply      | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  22 | Harbor Fashion Wholesale         | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  38 | Horizon Fashion Wholesale        | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  28 | Lakeside Garment Wholesale       | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  11 | Liberty Textile Trading          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  27 | Meridian Textile Supply          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  13 | Oakwood Fashion Distributors     | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   1 | Pacific Cotton Textiles          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  23 | Prime Stitch Textiles            | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  41 | Riverside Textile Trading       | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  32 | Royal Thread Supply              | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  12 | Silverline Clothing Supply       | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  31 | Skyline Apparel Trading          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  21 | Sterling Garment Distributors    | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   6 | Summit Fashion Supply            | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---   8 | Urban Thread Wholesale           | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  16 | Valley Knitwear Supply           | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
---  18 | Westbrook Apparel Group          | 1 | 1 | 0 | 0 | 1 | 0 | 100.00% | 0.00
+-- Expected output (verified in Oracle Omega):
+-- SupplierID | SupplierName                   | Net30Status | CreditLimit | ReceivedOrders | OnTimePct | AvgLeadDays | PurchaseHistory | ReceivedValue | ReturnRatePct
+-- 36         | Brightline Textile Group       | Inactive    | 40000.00    | 1              | 100.00    | 8.00        | 400.00          | 400.00        | 100.00
+-- 3          | Evergreen Fabric Distributors  | Active      | 25000.00    | 1              | 100.00    | 8.00        | 612.50          | 612.50        | 100.00
+-- 33         | Frontier Clothing Wholesale    | Active      | 25000.00    | 1              | 100.00    | 8.00        | 812.50          | 812.50        | 100.00
+-- 42         | Global Stitch Partners         | Active      | 20000.00    | 1              | 100.00    | 8.00        | 750.00          | 750.00        | 100.00
+-- 27         | Meridian Textile Supply        | Active      | 45000.00    | 1              | 100.00    | 8.00        | 612.50          | 612.50        | 100.00
+-- 12         | Silverline Clothing Supply     | Inactive    | 20000.00    | 1              | 100.00    | 8.00        | 400.00          | 400.00        | 100.00
+-- 21         | Sterling Garment Distributors  | Active      | 15000.00    | 1              | 100.00    | 8.00        | 1462.50         | 1462.50       | 100.00
+-- 6          | Summit Fashion Supply          | Active      | 40000.00    | 1              | 100.00    | 8.00        | 1250.00         | 1250.00       | 100.00
+-- 18         | Westbrook Apparel Group        | Active      | 50000.00    | 1              | 100.00    | 8.00        | 750.00          | 750.00        | 100.00
+-- 37         | Capital Garment Supply         | Active      | 45000.00    | 1              | 100.00    | 9.00        | 562.50          | 562.50        | 100.00
+-- 7          | Coastal Denim Distributors     | Active      | 45000.00    | 1              | 100.00    | 9.00        | 1512.50         | 1512.50       | 100.00
+-- 43         | Crown Apparel Wholesale        | Active      | 25000.00    | 1              | 100.00    | 9.00        | 962.50          | 962.50        | 100.00
+-- 22         | Harbor Fashion Wholesale       | Active      | 20000.00    | 1              | 100.00    | 9.00        | 1750.00         | 1750.00       | 100.00
+-- 28         | Lakeside Garment Wholesale      | Inactive    | 50000.00    | 1              | 100.00    | 9.00        | 800.00          | 800.00        | 100.00
+-- 13         | Oakwood Fashion Distributors   | Active      | 25000.00    | 1              | 100.00    | 9.00        | 562.50          | 562.50        | 100.00
+-- 1          | Pacific Cotton Textiles        | Active      | 15000.00    | 1              | 100.00    | 9.00        | 312.50          | 312.50        | 100.00
+-- 31         | Skyline Apparel Trading        | Active      | 15000.00    | 1              | 100.00    | 9.00        | 1512.50         | 1512.50       | 100.00
+-- 16         | Valley Knitwear Supply         | Inactive    | 40000.00    | 1              | 100.00    | 9.00        | 400.00          | 400.00        | 100.00
+-- 17         | Atlantic Fashion Trading       | Active      | 45000.00    | 1              | 100.00    | 10.00       | 562.50          | 562.50        | 100.00
+-- 26         | Brookfield Clothing Partners   | Active      | 40000.00    | 1              | 100.00    | 10.00       | 450.00          | 450.00        | 100.00
+-- 2          | Golden State Apparel Supply    | Active      | 20000.00    | 1              | 100.00    | 10.00       | 450.00          | 450.00        | 100.00
+-- 38         | Horizon Fashion Wholesale      | Active      | 50000.00    | 1              | 100.00    | 10.00       | 750.00          | 750.00        | 100.00
+-- 11         | Liberty Textile Trading        | Active      | 15000.00    | 1              | 100.00    | 10.00       | 1312.50         | 1312.50       | 100.00
+-- 23         | Prime Stitch Textiles          | Active      | 25000.00    | 1              | 100.00    | 10.00       | 2062.50         | 2062.50       | 100.00
+-- 41         | Riverside Textile Trading      | Active      | 15000.00    | 1              | 100.00    | 10.00       | 562.50          | 562.50        | 100.00
+-- 32         | Royal Thread Supply            | Inactive    | 20000.00    | 1              | 100.00    | 10.00       | 600.00          | 600.00        | 100.00
+-- 8          | Urban Thread Wholesale         | Inactive    | 50000.00    | 1              | 100.00    | 10.00       | 600.00          | 600.00        | 100.00
+-- 29         | Aspire Fashion Distributors    | Active      | 55000.00    | 0              | NULL      | NULL        | 1012.50         | 0.00          | 100.00
+-- 5          | Blue Ridge Textile Group       | Active      | 35000.00    | 0              | NULL      | NULL        | 1012.50         | 0.00          | 100.00
+-- 24         | Canyon Apparel Supply          | Inactive    | 30000.00    | 0              | NULL      | NULL        | 200.00          | 0.00          | 100.00
+-- 30         | Cedar Valley Textiles          | Active      | 10000.00    | 0              | NULL      | NULL        | 1250.00         | 0.00          | 100.00
+-- 45         | Continental Fashion Textiles   | Active      | 35000.00    | 0              | NULL      | NULL        | 1462.50         | 0.00          | 100.00
+-- 19         | Crescent Textile Partners      | Active      | 55000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
+-- 34         | Diamond Fabric Partners        | Active      | 30000.00    | 0              | NULL      | NULL        | 1050.00         | 0.00          | 100.00
+-- 40         | Elite Cotton Distributors      | Inactive    | 10000.00    | 0              | NULL      | NULL        | 400.00          | 0.00          | 100.00
+-- 25         | Grandview Fabric Company       | Active      | 35000.00    | 0              | NULL      | NULL        | 312.50          | 0.00          | 100.00
+-- 9          | Heritage Garment Supply        | Active      | 55000.00    | 0              | NULL      | NULL        | 812.50          | 0.00          | 100.00
+-- 35         | Maple Grove Apparel            | Active      | 35000.00    | 0              | NULL      | NULL        | 1312.50         | 0.00          | 100.00
+-- 14         | Metro Garment Wholesale        | Active      | 30000.00    | 0              | NULL      | NULL        | 750.00          | 0.00          | 100.00
+-- 4          | Northstar Clothing Wholesale   | Inactive    | 30000.00    | 0              | NULL      | NULL        | 800.00          | 0.00          | 100.00
+-- 15         | Pioneer Cotton Company         | Active      | 35000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
+-- 44         | Premier Garment Supply         | Inactive    | 30000.00    | 0              | NULL      | NULL        | 1200.00         | 0.00          | 100.00
+-- 20         | Redwood Clothing Supply        | Inactive    | 10000.00    | 0              | NULL      | NULL        | 1200.00         | 0.00          | 100.00
+-- 39         | Stonebridge Clothing Supply    | Active      | 55000.00    | 0              | NULL      | NULL        | 962.50          | 0.00          | 100.00
+-- 10         | Sunrise Apparel Partners       | Active      | 10000.00    | 0              | NULL      | NULL        | 1050.00         | 0.00          | 100.00
+--
 -- 45 rows selected.
 
 -- ============================================================
@@ -684,6 +986,8 @@ ORDER BY
 -- average shipping cost, average package weight, average
 -- delivery time, on-time deliveries, late deliveries, and
 -- on-time delivery percentage.
+--
+-- Business Goal: 12
 --
 -- Features: JOIN, GROUP BY, aggregate functions, CASE,
 --           calculated percentage, ORDER BY.
@@ -759,107 +1063,1052 @@ ORDER BY
 -- 3 rows selected.
 
 -- ============================================================
--- Query 11: Product profitability analysis.
+-- Query 11: Product-variant profitability
 --
--- English:
--- Identify the ten products generating the highest estimated
--- gross profit. Display cost-covered units sold, gross sales,
--- discounts, net sales, estimated acquisition costs,
--- estimated gross profit, and gross profit margin.
+-- Business question:
+-- What estimated contribution does each sold product variant
+-- generate after wholesale costs, Amazon fees, outbound
+-- shipping, actual refunds, and return-shipping costs?
 --
--- Acquisition cost uses weighted average unit cost from
--- received purchase orders for each product variant.
+-- Business Goal: 7
 --
--- IMPORTANT:
--- Only sales with matching received-purchase cost records
--- are included in this profitability analysis.
---
--- Estimated Gross Profit = Net Sales - Acquisition Cost
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY,
+-- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
 -- ============================================================
 
 PROMPT
-PROMPT ===== QUERY 11: PRODUCT PROFITABILITY ANALYSIS =====
+PROMPT ===== QUERY 11: PRODUCT-VARIANT PROFITABILITY =====
 
-COLUMN ProductName FORMAT A25
-COLUMN Brand FORMAT A20
-COLUMN UnitsSold FORMAT 999,990
-COLUMN GrossSales FORMAT 999,999,990.00
-COLUMN Discounts FORMAT 999,990.00
-COLUMN NetSales FORMAT 999,999,990.00
-COLUMN AcquisitionCost FORMAT 999,999,990.00
-COLUMN EstimatedGrossProfit FORMAT 999,999,990.00
-COLUMN GrossProfitMargin FORMAT 990.00
-
-WITH VariantCost AS (
-    SELECT
-        pod.VariantID,
-        SUM(pod.OrderedQuantity * pod.CostPerUnit)
-        / SUM(pod.OrderedQuantity) AS AverageUnitCost
-    FROM F26_S001_T5_PURCHASE_ORDER_DETAIL pod
-    JOIN F26_S001_T5_PURCHASE_ORDER po
-        ON pod.PurchaseOrderID = po.PurchaseOrderID
-    WHERE po.Status = 'Received'
-    GROUP BY pod.VariantID
-)
+COLUMN ProductName FORMAT A30
+COLUMN VariantSize FORMAT A11
+COLUMN Color FORMAT A10
+COLUMN UnitsSold FORMAT 999990
+COLUMN NetSales FORMAT 999999990.00
+COLUMN WholesaleCost FORMAT 999999990.00
+COLUMN AmazonFees FORMAT 9999990.00
+COLUMN ShippingCost FORMAT 9999990.00
+COLUMN ReturnCost FORMAT 9999990.00
+COLUMN MissingCostLines FORMAT 999990
+COLUMN EstimatedNetContribution FORMAT 999999990.00
 
 SELECT
-    p.ProductName,
-    p.Brand,
-    SUM(oi.Quantity) AS UnitsSold,
-    ROUND(
-        SUM(oi.Quantity * oi.SellingPricePerUnit), 2
-    ) AS GrossSales,
-    ROUND(SUM(oi.Discount), 2) AS Discounts,
-    ROUND(
-        SUM(oi.Quantity * oi.SellingPricePerUnit)
-        - SUM(oi.Discount), 2
-    ) AS NetSales,
-    ROUND(
-        SUM(oi.Quantity * vc.AverageUnitCost), 2
-    ) AS AcquisitionCost,
-    ROUND(
-        SUM(
-            oi.Quantity *
-            (oi.SellingPricePerUnit - vc.AverageUnitCost)
-        ) - SUM(oi.Discount), 2
-    ) AS EstimatedGrossProfit,
-    ROUND(
-        100 * (
-            SUM(
-                oi.Quantity *
-                (oi.SellingPricePerUnit - vc.AverageUnitCost)
-            ) - SUM(oi.Discount)
-        ) / NULLIF(
-            SUM(oi.Quantity * oi.SellingPricePerUnit)
-            - SUM(oi.Discount), 0
-        ), 2
-    ) AS GrossProfitMargin
-FROM F26_S001_T5_PRODUCT p
-JOIN F26_S001_T5_PRODUCT_VARIANT pv
-    ON p.ProductID = pv.ProductID
-JOIN F26_S001_T5_ORDER_ITEM oi
-    ON pv.VariantID = oi.VariantID
-JOIN VariantCost vc
-    ON pv.VariantID = vc.VariantID
+    VariantID,
+    ProductName,
+    VariantSize,
+    Color,
+    SUM(Quantity) AS UnitsSold,
+    ROUND(SUM(NetSales), 2) AS NetSales,
+    CASE
+        WHEN COUNT(LineWholesaleCost) = COUNT(*)
+            THEN ROUND(SUM(LineWholesaleCost), 2)
+    END AS WholesaleCost,
+    CASE
+        WHEN COUNT(LineAmazonFees) = COUNT(*)
+            THEN ROUND(SUM(LineAmazonFees), 2)
+    END AS AmazonFees,
+    CASE
+        WHEN COUNT(LineShippingCost) = COUNT(*)
+            THEN ROUND(SUM(LineShippingCost), 2)
+    END AS ShippingCost,
+    ROUND(SUM(LineReturnCost), 2) AS ReturnCost,
+    SUM(MissingCostLine) AS MissingCostLines,
+    CASE
+        WHEN SUM(MissingCostLine) = 0
+            THEN ROUND(
+                SUM(
+                    NetSales
+                    - LineWholesaleCost
+                    - LineAmazonFees
+                    - LineShippingCost
+                    - LineReturnCost
+                ),
+                2
+            )
+    END AS EstimatedNetContribution
+FROM (
+    SELECT
+        VariantID,
+        ProductName,
+        VariantSize,
+        Color,
+        Quantity,
+        NetSales,
+        LineWholesaleCost,
+        AllocationShare * OrderAmazonFees AS LineAmazonFees,
+        AllocationShare * OrderShippingCost AS LineShippingCost,
+        LineReturnCost,
+        MissingCostLine
+    FROM (
+        SELECT
+            pv.VariantID,
+            p.ProductName,
+            pv.VariantSize,
+            pv.Color,
+            oi.Quantity,
+            oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount AS NetSales,
+            oi.Quantity * AverageUnitCost AS LineWholesaleCost,
+            ao.AmazonReferralCost + ao.SubscriptionCost
+                AS OrderAmazonFees,
+            ao.ShippingCost AS OrderShippingCost,
+            NVL(r.RefundAmount, 0)
+                + NVL(r.ReturnShippingCost, 0) AS LineReturnCost,
+            CASE
+                WHEN AverageUnitCost IS NULL
+                  OR ao.AmazonReferralCost IS NULL
+                  OR ao.SubscriptionCost IS NULL
+                  OR ao.ShippingCost IS NULL
+                    THEN 1
+                ELSE 0
+            END AS MissingCostLine,
+            CASE
+                WHEN SUM(
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) OVER (
+                    PARTITION BY oi.OrderNumber
+                ) > 0
+                THEN (
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) / NULLIF(
+                    SUM(
+                        oi.Quantity * oi.SellingPricePerUnit
+                        - oi.Discount
+                    ) OVER (
+                        PARTITION BY oi.OrderNumber
+                    ),
+                    0
+                )
+                ELSE oi.Quantity / SUM(oi.Quantity) OVER (
+                    PARTITION BY oi.OrderNumber
+                )
+            END AS AllocationShare
+        FROM F26_S001_T5_ORDER_ITEM oi
+        JOIN F26_S001_T5_AMAZON_ORDER ao
+            ON ao.OrderNumber = oi.OrderNumber
+        JOIN F26_S001_T5_PRODUCT_VARIANT pv
+            ON pv.VariantID = oi.VariantID
+        JOIN F26_S001_T5_PRODUCT p
+            ON p.ProductID = pv.ProductID
+        LEFT JOIN (
+            SELECT
+                pod.VariantID AS CostVariantID,
+                SUM(
+                    pod.OrderedQuantity * pod.CostPerUnit
+                    - pod.Discount
+                ) / SUM(pod.OrderedQuantity)
+                    AS AverageUnitCost
+            FROM F26_S001_T5_PURCHASE_ORDER_DETAIL pod
+            JOIN F26_S001_T5_PURCHASE_ORDER po
+                ON po.PurchaseOrderID = pod.PurchaseOrderID
+            WHERE po.Status = 'Received'
+            GROUP BY pod.VariantID
+        )
+            ON CostVariantID = oi.VariantID
+        LEFT JOIN F26_S001_T5_RETURN r
+            ON r.OrderNumber = oi.OrderNumber
+           AND r.LineItemNumber = oi.LineItemNumber
+    )
+)
 GROUP BY
-    p.ProductID,
-    p.ProductName,
-    p.Brand
+    VariantID,
+    ProductName,
+    VariantSize,
+    Color
 ORDER BY
-    EstimatedGrossProfit DESC,
-    p.ProductName
-FETCH FIRST 10 ROWS ONLY;
+    EstimatedNetContribution DESC NULLS LAST,
+    VariantID;
 
--- Expected output (initial populated database, before updates; verified in Oracle Omega):
--- ProductName                 | Brand              | UnitsSold | GrossSales | Discounts | NetSales | AcquisitionCost | EstimatedGrossProfit | GrossProfitMargin
--- Puffer Winter Jacket        | The North Face     | 3         | 485.97     | 0.00      | 485.97   | 67.50           | 418.47               | 86.11
--- Cashmere Blend Sweater      | Lands' End         | 3         | 296.97     | 0.00      | 296.97   | 67.50           | 229.47               | 77.27
--- Lightweight Windbreaker     | Columbia           | 2         | 134.98     | 0.00      | 134.98   | 40.00           | 94.98                | 70.37
--- Corduroy Trousers           | Amazon Essentials  | 3         | 126.87     | 0.00      | 126.87   | 45.00           | 81.87                | 64.53
--- Knit Sweater Dress          | ANRABESS           | 2         | 98.98      | 0.00      | 98.98    | 25.00           | 73.98                | 74.74
--- Formal Wrap Dress           | Calvin Klein      | 1         | 80.99      | 0.00      | 80.99    | 10.00           | 70.99                | 87.65
--- Cotton Pajama Set           | Amazon Essentials  | 3         | 105.27     | 0.00      | 105.27   | 45.00           | 60.27                | 57.25
--- Classic Denim Jacket        | Levi's             | 1         | 80.99      | 0.00      | 80.99    | 25.00           | 55.99                | 69.13
--- Slim Fit Oxford Shirt       | Goodthreads        | 3         | 94.47      | 0.00      | 94.47    | 45.00           | 49.47                | 52.37
--- Slim Fit Chinos             | Dockers            | 2         | 89.98      | 0.00      | 89.98    | 55.00           | 34.98                | 38.88
--- 10 rows selected.
+-- Expected output (verified in Oracle Omega):
+-- VariantID | ProductName                  | VariantSize | Color | UnitsSold | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnCost | MissingCostLines | EstimatedNetContribution
+-- 2036      | Linen Button-Up Shirt        | XXL         | Red   | 1         | 38.69    | 10.00         | 6.79       | 4.99         | 41.18      | 0                | -24.27
+-- 2012      | Formal Wrap Dress            | S           | White | 1         | 80.99    | 10.00         | 13.14      | 4.99         | 83.48      | 0                | -30.62
+-- 2027      | Satin Nightgown              | One Size    | Green | 1         | 29.69    | 17.50         | 5.44       | 10.99        | 32.18      | 0                | -36.42
+-- 2003      | Relaxed Fit Hoodie           | M           | Navy  | 1         | 35.99    | 17.50         | 6.39       | 10.99        | 38.48      | 0                | -37.37
+-- 2042      | Cotton Henley Shirt          | S           | White | 1         | 24.29    | 25.00         | 4.63       | 8.99         | 24.29      | 0                | -38.62
+-- 2001      | Classic Cotton T-Shirt       | XS          | Black | 2         | 35.98    | 25.00         | 6.39       | 6.99         | 38.47      | 0                | -40.87
+-- 2037      | Oversized Graphic Tee        | One Size    | Green | 2         | 50.38    | 25.00         | 8.55       | 6.99         | 52.87      | 0                | -43.03
+-- 2033      | Everyday Crew Socks          | M           | Navy  | 1         | 17.09    | 32.50         | 3.55       | 6.99         | 19.58      | 0                | -45.53
+-- 2006      | Straight Leg Jeans           | XXL         | Red   | 1         | 53.99    | 25.00         | 9.09       | 8.99         | 56.48      | 0                | -45.57
+-- 2021      | Fleece Jogger Pants          | XS          | Black | 1         | 26.99    | 32.50         | 5.04       | 6.99         | 29.48      | 0                | -47.02
+-- 2018      | Classic Denim Jacket         | 30          | Beige | 1         | 80.99    | 25.00         | 13.14      | 8.99         | 80.99      | 0                | -47.13
+-- 2013      | Knit Sweater Dress           | M           | Navy  | 2         | 98.98    | 25.00         | 15.84      | 6.99         | 101.47     | 0                | -50.32
+-- 2028      | Fleece Lounge Pants          | 30          | Beige | 2         | 50.38    | 40.00         | 8.55       | 4.99         | 52.87      | 0                | -56.03
+-- 2016      | Lightweight Windbreaker      | XXL         | Red   | 2         | 134.98   | 40.00         | 21.24      | 4.99         | 134.98     | 0                | -66.23
+-- 2002      | Slim Fit Oxford Shirt        | S           | White | 3         | 94.47    | 45.00         | 15.16      | 8.99         | 94.47      | 0                | -69.15
+-- 2026      | Cotton Pajama Set            | XXL         | Red   | 3         | 105.27   | 45.00         | 16.78      | 8.99         | 105.27     | 0                | -70.77
+-- 2038      | Corduroy Trousers            | 30          | Beige | 3         | 126.87   | 45.00         | 20.02      | 8.99         | 129.36     | 0                | -76.50
+-- 2031      | Cotton Boxer Briefs          | XS          | Black | 2         | 53.98    | 55.00         | 9.09       | 10.99        | 56.47      | 0                | -77.57
+-- 2043      | Wide Leg Palazzo Pants       | M           | Navy  | 2         | 88.18    | 55.00         | 14.22      | 10.99        | 90.67      | 0                | -82.70
+-- 2007      | Slim Fit Chinos              | One Size    | Green | 2         | 89.98    | 55.00         | 14.49      | 10.99        | 92.47      | 0                | -82.97
+-- 2022      | Running Compression Shorts   | S           | White | 2         | 62.98    | 70.00         | 10.44      | 8.99         | 65.47      | 0                | -91.92
+-- 2032      | Seamless Briefs              | S           | White | 3         | 67.47    | 90.00         | 11.11      | 4.99         | 67.47      | 0                | -106.10
+-- 2008      | High Rise Leggings           | 30          | Beige | 3         | 97.17    | 90.00         | 15.57      | 4.99         | 97.17      | 0                | -110.56
+-- 2041      | Cashmere Blend Sweater       | XS          | Black | 3         | 296.97   | 67.50         | 45.54      | 6.99         | 299.46     | 0                | -122.52
+-- 2023      | Yoga Sports Bra              | M           | Navy  | 3         | 78.27    | 112.50        | 12.73      | 10.99        | 80.76      | 0                | -138.71
+-- 2011      | Floral Summer Dress          | XS          | Black | 3         | 116.07   | 112.50        | 18.40      | 10.99        | 118.56     | 0                | -144.38
+-- 2017      | Puffer Winter Jacket         | One Size    | Green | 3         | 485.97   | 67.50         | 73.89      | 6.99         | 488.46     | 0                | -150.87
+-- 2004      | Performance Polo Shirt       | L           | Gray  | 2         | 80.98    | NULL          | 13.14      | 4.99         | 83.47      | 1                | NULL
+-- 2005      | Ribbed Tank Top              | XL          | Blue  | 3         | 45.87    | NULL          | 7.87       | 6.99         | 48.36      | 1                | NULL
+-- 2009      | Cargo Shorts                 | 32          | Brown | 1         | 29.69    | NULL          | 5.44       | 6.99         | 32.18      | 1                | NULL
+-- 2010      | Pleated Midi Skirt           | 34          | Pink  | 2         | 82.78    | NULL          | 13.41      | 8.99         | 82.78      | 1                | NULL
+-- 2014      | Maxi Evening Dress           | L           | Gray  | 3         | 215.97   | NULL          | 33.39      | 8.99         | 218.46     | 1                | NULL
+-- 2015      | Denim Shirt Dress            | XL          | Blue  | 1         | 62.99    | NULL          | 10.44      | 10.99        | 65.48      | 1                | NULL
+-- 2019      | Waterproof Raincoat          | 32          | Brown | 2         | 179.98   | NULL          | 27.99      | 10.99        | 182.47     | 1                | NULL
+-- 2020      | Wool Blend Overcoat          | 34          | Pink  | 3         | 512.97   | NULL          | 77.94      | 4.99         | 515.46     | 1                | NULL
+-- 2024      | Training Track Jacket        | L           | Gray  | 1         | 62.99    | NULL          | 10.44      | 4.99         | 62.99      | 1                | NULL
+-- 2025      | Workout Training Tee         | XL          | Blue  | 2         | 71.98    | NULL          | 11.79      | 6.99         | 74.47      | 1                | NULL
+-- 2029      | Flannel Pajama Shirt         | 32          | Brown | 3         | 99.87    | NULL          | 15.97      | 6.99         | 102.36     | 1                | NULL
+-- 2030      | Thermal Sleep Set            | 34          | Pink  | 1         | 40.49    | NULL          | 7.06       | 8.99         | 42.98      | 1                | NULL
+-- 2034      | Winter Knit Beanie           | L           | Gray  | 2         | 41.38    | NULL          | 7.20       | 8.99         | 41.38      | 1                | NULL
+-- 2035      | Leather Casual Belt          | XL          | Blue  | 3         | 80.97    | NULL          | 13.14      | 10.99        | 83.46      | 1                | NULL
+-- 2039      | Athletic Running Leggings    | 32          | Brown | 1         | 53.99    | NULL          | 9.09       | 10.99        | 56.48      | 1                | NULL
+-- 2040      | Quilted Bomber Jacket        | 34          | Pink  | 2         | 251.98   | NULL          | 38.79      | 4.99         | 251.98     | 1                | NULL
+-- 2044      | Faux Leather Skirt           | L           | Gray  | 3         | 175.47   | NULL          | 27.31      | 4.99         | 177.96     | 1                | NULL
+-- 2045      | Thermal Base Layer Top       | XL          | Blue  | 1         | 44.99    | NULL          | 7.74       | 6.99         | 47.48      | 1                | NULL
+--
+-- 45 rows selected.
+
+-- ============================================================
+-- Query 12: Monthly profit and loss estimate
+--
+-- Business question:
+-- What are monthly sales, wholesale costs, Amazon fees,
+-- outbound shipping, refunds, return shipping, operating
+-- expenses, estimated salaries, and profit or loss?
+--
+-- Business Goal: 9
+--
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY, SUM,
+-- CASE, calendar generation, calculated columns, ORDER BY.
+-- ============================================================
+
+PROMPT
+PROMPT ===== QUERY 12: MONTHLY PROFIT AND LOSS =====
+
+COLUMN ReportMonth FORMAT A11
+COLUMN NetSales FORMAT 999999990.00
+COLUMN WholesaleCost FORMAT 999999990.00
+COLUMN AmazonFees FORMAT 9999990.00
+COLUMN ShippingCost FORMAT 9999990.00
+COLUMN ReturnRefunds FORMAT 999999990.00
+COLUMN ReturnShipping FORMAT 9999990.00
+COLUMN OperatingCosts FORMAT 999999990.00
+COLUMN EstimatedSalaries FORMAT 999999990.00
+COLUMN MissingCostLines FORMAT 999990
+COLUMN MissingCostOrders FORMAT 999990
+COLUMN EstimatedProfitLoss FORMAT 999999990.00
+
+SELECT
+    TO_CHAR(ReportMonth, 'YYYY-MM') AS ReportMonth,
+    NetSales,
+    WholesaleCost,
+    AmazonFees,
+    ShippingCost,
+    ReturnRefunds,
+    ReturnShipping,
+    OperatingCosts,
+    ROUND(EstimatedSalaries, 2) AS EstimatedSalaries,
+    MissingCostLines,
+    MissingCostOrders,
+    CASE
+        WHEN MissingCostLines = 0
+         AND MissingCostOrders = 0
+            THEN ROUND(
+                NetSales
+                - WholesaleCost
+                - AmazonFees
+                - ShippingCost
+                - ReturnRefunds
+                - ReturnShipping
+                - OperatingCosts
+                - EstimatedSalaries,
+                2
+            )
+    END AS EstimatedProfitLoss
+FROM (
+    SELECT
+        ReportMonth,
+        ROUND(NVL(MonthlyNetSales, 0), 2) AS NetSales,
+        CASE
+            WHEN NVL(UnknownWholesaleLines, 0) = 0
+                THEN ROUND(NVL(MonthlyWholesaleCost, 0), 2)
+        END AS WholesaleCost,
+        CASE
+            WHEN NVL(UnknownOrderCosts, 0) = 0
+                THEN ROUND(NVL(MonthlyAmazonFees, 0), 2)
+        END AS AmazonFees,
+        CASE
+            WHEN NVL(UnknownOrderCosts, 0) = 0
+                THEN ROUND(NVL(MonthlyShippingCost, 0), 2)
+        END AS ShippingCost,
+        ROUND(NVL(MonthlyRefunds, 0), 2) AS ReturnRefunds,
+        ROUND(NVL(MonthlyReturnShipping, 0), 2)
+            AS ReturnShipping,
+        ROUND(NVL(MonthlyOperatingCosts, 0), 2)
+            AS OperatingCosts,
+        NVL(UnknownWholesaleLines, 0) AS MissingCostLines,
+        NVL(UnknownOrderCosts, 0) AS MissingCostOrders,
+        NVL(
+            (
+                SELECT
+                    SUM(
+                        e.Salary / 12
+                        * (
+                            LAST_DAY(ReportMonth)
+                            - GREATEST(
+                                TRUNC(e.HireDate),
+                                ReportMonth
+                            )
+                            + 1
+                        )
+                        / (
+                            LAST_DAY(ReportMonth)
+                            - ReportMonth
+                            + 1
+                        )
+                    )
+                FROM F26_S001_T5_EMPLOYEE e
+                WHERE e.HireDate < ADD_MONTHS(ReportMonth, 1)
+            ),
+            0
+        ) AS EstimatedSalaries
+    FROM (
+        SELECT
+            ADD_MONTHS(FirstMonth, LEVEL - 1) AS ReportMonth
+        FROM (
+            SELECT
+                MIN(EventMonth) AS FirstMonth,
+                MAX(EventMonth) AS LastMonth
+            FROM (
+                SELECT
+                    TRUNC(OrderDate, 'MM') AS EventMonth
+                FROM F26_S001_T5_AMAZON_ORDER
+
+                UNION
+
+                SELECT TRUNC(ReturnDate, 'MM')
+                FROM F26_S001_T5_RETURN
+
+                UNION
+
+                SELECT TRUNC(ExpenseDate, 'MM')
+                FROM F26_S001_T5_OPERATING_COST
+            )
+        )
+        WHERE FirstMonth IS NOT NULL
+        CONNECT BY LEVEL <=
+            MONTHS_BETWEEN(LastMonth, FirstMonth) + 1
+    )
+    LEFT JOIN (
+        SELECT
+            TRUNC(ao.OrderDate, 'MM') AS SalesMonth,
+            SUM(
+                oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount
+            ) AS MonthlyNetSales,
+            SUM(
+                oi.Quantity * AverageUnitCost
+            ) AS MonthlyWholesaleCost,
+            SUM(
+                CASE
+                    WHEN AverageUnitCost IS NULL THEN 1
+                    ELSE 0
+                END
+            ) AS UnknownWholesaleLines
+        FROM F26_S001_T5_AMAZON_ORDER ao
+        JOIN F26_S001_T5_ORDER_ITEM oi
+            ON oi.OrderNumber = ao.OrderNumber
+        LEFT JOIN (
+            SELECT
+                pod.VariantID AS CostVariantID,
+                SUM(
+                    pod.OrderedQuantity * pod.CostPerUnit
+                    - pod.Discount
+                ) / SUM(pod.OrderedQuantity)
+                    AS AverageUnitCost
+            FROM F26_S001_T5_PURCHASE_ORDER_DETAIL pod
+            JOIN F26_S001_T5_PURCHASE_ORDER po
+                ON po.PurchaseOrderID = pod.PurchaseOrderID
+            WHERE po.Status = 'Received'
+            GROUP BY pod.VariantID
+        )
+            ON CostVariantID = oi.VariantID
+        GROUP BY TRUNC(ao.OrderDate, 'MM')
+    )
+        ON SalesMonth = ReportMonth
+    LEFT JOIN (
+        SELECT
+            TRUNC(OrderDate, 'MM') AS FeeMonth,
+            SUM(AmazonReferralCost + SubscriptionCost)
+                AS MonthlyAmazonFees,
+            SUM(ShippingCost) AS MonthlyShippingCost,
+            SUM(
+                CASE
+                    WHEN AmazonReferralCost IS NULL
+                      OR SubscriptionCost IS NULL
+                      OR ShippingCost IS NULL
+                        THEN 1
+                    ELSE 0
+                END
+            ) AS UnknownOrderCosts
+        FROM F26_S001_T5_AMAZON_ORDER
+        GROUP BY TRUNC(OrderDate, 'MM')
+    )
+        ON FeeMonth = ReportMonth
+    LEFT JOIN (
+        SELECT
+            TRUNC(ReturnDate, 'MM') AS RefundMonth,
+            SUM(RefundAmount) AS MonthlyRefunds,
+            SUM(ReturnShippingCost) AS MonthlyReturnShipping
+        FROM F26_S001_T5_RETURN
+        GROUP BY TRUNC(ReturnDate, 'MM')
+    )
+        ON RefundMonth = ReportMonth
+    LEFT JOIN (
+        SELECT
+            TRUNC(ExpenseDate, 'MM') AS ExpenseMonth,
+            SUM(Amount) AS MonthlyOperatingCosts
+        FROM F26_S001_T5_OPERATING_COST
+        GROUP BY TRUNC(ExpenseDate, 'MM')
+    )
+        ON ExpenseMonth = ReportMonth
+)
+ORDER BY ReportMonth;
+
+-- Expected output (verified in Oracle Omega, updated database):
+--
+-- ReportMonth | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | OperatingCosts | EstimatedSalaries | MissingCostLines | MissingCostOrders | EstimatedProfitLoss
+-- 2026-01     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 5369.00        | 228166.67         | 0                | 0                 | -233535.67
+-- 2026-02     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 1645.00        | 228166.67         | 0                | 0                 | -229811.67
+-- 2026-03     | 534.43   | NULL          | 88.10      | 63.92        | 283.29        | 19.96          | 9670.00        | 228166.67         | 2                | 0                 | NULL
+-- 2026-04     | 822.45   | NULL          | 131.30     | 63.92        | 634.65        | 29.94          | 5369.00        | 228166.67         | 4                | 0                 | NULL
+-- 2026-05     | 1428.15  | NULL          | 221.17     | 58.93        | 1661.35       | 24.95          | 1645.00        | 228166.67         | 2                | 0                 | NULL
+-- 2026-06     | 514.65   | NULL          | 85.12      | 63.92        | 473.55        | 29.94          | 9670.00        | 228166.67         | 4                | 0                 | NULL
+-- 2026-07     | 476.84   | NULL          | 79.45      | 63.92        | 424.94        | 29.94          | 5369.00        | 228166.67         | 3                | 0                 | NULL
+-- 2026-08     | 881.88   | NULL          | 138.23     | 43.94        | 880.16        | 24.95          | 1645.00        | 228166.67         | 3                | 0                 | NULL
+-- 2026-09     | 0.00     | 0.00          | 0.00       | 0.00         | 215.46        | 9.98           | 9460.00        | 228166.67         | 0                | 0                 | -237852.11
+-- 2026-10     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 0.00           | 228166.67         | 0                | 0                 | -228166.67
+-- 2026-11     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 125.00         | 228166.67         | 0                | 0                 | -228291.67
+--
+-- 11 rows selected.
+
+-- ============================================================
+-- Query 13: Customer purchase behavior
+--
+-- Business question:
+-- What are average order value, single-versus-multiple-variant
+-- purchasing patterns, and repeat purchase rates for each
+-- purchasing customer and for the business overall?
+--
+-- Business Goal: 10
+--
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY, GROUPING SETS,
+-- GROUPING, CASE, SUM, COUNT, calculated percentages,
+-- ORDER BY.
+-- ============================================================
+
+PROMPT
+PROMPT ===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
+
+COLUMN ReportLevel FORMAT A12
+COLUMN Fname FORMAT A12
+COLUMN Lname FORMAT A15
+COLUMN PurchasingCustomers FORMAT 999990
+COLUMN TotalOrders FORMAT 999990
+COLUMN AverageOrderValue FORMAT 9999990.00
+COLUMN SingleVariantOrders FORMAT 999990
+COLUMN MultiVariantOrders FORMAT 999990
+COLUMN SingleVariantOrderPct FORMAT 990.00
+COLUMN MultiVariantOrderPct FORMAT 990.00
+COLUMN RepeatCustomers FORMAT 999990
+COLUMN RepeatCustomerPct FORMAT 990.00
+
+SELECT
+    CASE
+        WHEN GROUPING(CustomerID) = 1
+            THEN 'ALL BUYERS'
+        ELSE 'CUSTOMER'
+    END AS ReportLevel,
+    CustomerID,
+    Fname,
+    Lname,
+    COUNT(*) AS PurchasingCustomers,
+    SUM(OrderCount) AS TotalOrders,
+    ROUND(
+        SUM(Revenue) / NULLIF(SUM(OrderCount), 0),
+        2
+    ) AS AverageOrderValue,
+    SUM(SingleOrders) AS SingleVariantOrders,
+    SUM(MultiOrders) AS MultiVariantOrders,
+    ROUND(
+        100 * SUM(SingleOrders)
+        / NULLIF(SUM(OrderCount), 0),
+        2
+    ) AS SingleVariantOrderPct,
+    ROUND(
+        100 * SUM(MultiOrders)
+        / NULLIF(SUM(OrderCount), 0),
+        2
+    ) AS MultiVariantOrderPct,
+    SUM(
+        CASE
+            WHEN OrderCount > 1 THEN 1
+            ELSE 0
+        END
+    ) AS RepeatCustomers,
+    ROUND(
+        100 * SUM(
+            CASE
+                WHEN OrderCount > 1 THEN 1
+                ELSE 0
+            END
+        ) / NULLIF(COUNT(*), 0),
+        2
+    ) AS RepeatCustomerPct
+FROM (
+    SELECT
+        c.CustomerID,
+        c.Fname,
+        c.Lname,
+        COUNT(*) AS OrderCount,
+        SUM(OrderValue) AS Revenue,
+        SUM(
+            CASE
+                WHEN DistinctVariants = 1 THEN 1
+                ELSE 0
+            END
+        ) AS SingleOrders,
+        SUM(
+            CASE
+                WHEN DistinctVariants > 1 THEN 1
+                ELSE 0
+            END
+        ) AS MultiOrders
+    FROM F26_S001_T5_CUSTOMER c
+    JOIN (
+        SELECT
+            ao.OrderNumber,
+            ao.CustomerID AS OrderCustomerID,
+            COUNT(DISTINCT oi.VariantID) AS DistinctVariants,
+            SUM(
+                oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount
+            ) AS OrderValue
+        FROM F26_S001_T5_AMAZON_ORDER ao
+        JOIN F26_S001_T5_ORDER_ITEM oi
+            ON oi.OrderNumber = ao.OrderNumber
+        GROUP BY
+            ao.OrderNumber,
+            ao.CustomerID
+    )
+        ON OrderCustomerID = c.CustomerID
+    GROUP BY
+        c.CustomerID,
+        c.Fname,
+        c.Lname
+)
+GROUP BY GROUPING SETS (
+    (CustomerID, Fname, Lname),
+    ()
+)
+ORDER BY
+    ReportLevel,
+    CustomerID;
+
+-- Expected output (verified in Oracle Omega):
+-- ReportLevel | CustomerID | Fname     | Lname     | PurchasingCustomers | TotalOrders | AverageOrderValue | SingleVariantOrders | MultiVariantOrders | SingleVariantOrderPct | MultiVariantOrderPct | RepeatCustomers | RepeatCustomerPct
+-- ALL BUYERS  | NULL       | NULL      | NULL      | 45                  | 45          | 103.52            | 45                  | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5001       | James     | Miller    | 1                   | 1           | 35.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5002       | Emma      | Wilson    | 1                   | 1           | 94.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5003       | Michael   | Garcia    | 1                   | 1           | 35.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5004       | Olivia    | Gonzalez  | 1                   | 1           | 80.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5005       | William   | Jones     | 1                   | 1           | 45.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5006       | Sophia    | Lopez     | 1                   | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5007       | Daniel    | Brown     | 1                   | 1           | 89.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5008       | Ava       | Hernandez | 1                   | 1           | 97.17             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5009       | Benjamin  | Williams  | 1                   | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5010       | Isabella  | Martinez  | 1                   | 1           | 82.78             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5011       | Alexander | Johnson   | 1                   | 1           | 116.07            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5012       | Mia       | Rodriguez | 1                   | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5013       | Ethan     | Smith     | 1                   | 1           | 98.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5014       | Charlotte | Davis     | 1                   | 1           | 215.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5015       | Lucas     | Anderson  | 1                   | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5016       | James     | Miller    | 1                   | 1           | 134.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5017       | Emma      | Wilson    | 1                   | 1           | 485.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5018       | Michael   | Garcia    | 1                   | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5019       | Olivia    | Gonzalez  | 1                   | 1           | 179.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5020       | William   | Jones     | 1                   | 1           | 512.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5021       | Sophia    | Lopez     | 1                   | 1           | 26.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5022       | Daniel    | Brown     | 1                   | 1           | 62.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5023       | Ava       | Hernandez | 1                   | 1           | 78.27             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5024       | Benjamin  | Williams  | 1                   | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5025       | Isabella  | Martinez  | 1                   | 1           | 71.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5026       | Alexander | Johnson   | 1                   | 1           | 105.27            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5027       | Mia       | Rodriguez | 1                   | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5028       | Ethan     | Smith     | 1                   | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5029       | Charlotte | Davis     | 1                   | 1           | 99.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5030       | Lucas     | Anderson  | 1                   | 1           | 40.49             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5031       | James     | Miller    | 1                   | 1           | 53.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5032       | Emma      | Wilson    | 1                   | 1           | 67.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5033       | Michael   | Garcia    | 1                   | 1           | 17.09             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5034       | Olivia    | Gonzalez  | 1                   | 1           | 41.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5035       | William   | Jones     | 1                   | 1           | 80.97             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5036       | Sophia    | Lopez     | 1                   | 1           | 38.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5037       | Daniel    | Brown     | 1                   | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5038       | Ava       | Hernandez | 1                   | 1           | 126.87            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5039       | Benjamin  | Williams  | 1                   | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5040       | Isabella  | Martinez  | 1                   | 1           | 251.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5041       | Alexander | Johnson   | 1                   | 1           | 296.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5042       | Mia       | Rodriguez | 1                   | 1           | 24.29             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5043       | Ethan     | Smith     | 1                   | 1           | 88.18             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5044       | Charlotte | Davis     | 1                   | 1           | 175.47            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5045       | Lucas     | Anderson  | 1                   | 1           | 44.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+--
+-- 46 rows selected.
+
+-- ============================================================
+-- Query 14: Brand performance
+--
+-- Business question:
+-- Which brands perform best in sales revenue, estimated
+-- contribution margin, and observed return rate?
+--
+-- Business Goal: 11
+--
+-- Features:
+-- Multiple JOINs, subqueries, GROUP BY,
+-- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
+-- ============================================================
+
+PROMPT
+PROMPT ===== QUERY 14: BRAND PERFORMANCE =====
+
+COLUMN Brand FORMAT A20
+COLUMN UnitsSold FORMAT 999990
+COLUMN NetSales FORMAT 999999990.00
+COLUMN WholesaleCost FORMAT 999999990.00
+COLUMN AmazonFees FORMAT 9999990.00
+COLUMN ShippingCost FORMAT 9999990.00
+COLUMN ReturnCost FORMAT 9999990.00
+COLUMN LineReturnRatePct FORMAT 990.00
+COLUMN MissingCostLines FORMAT 999990
+COLUMN EstimatedNetContribution FORMAT 999999990.00
+COLUMN ContributionMarginPct FORMAT 999990.00
+
+SELECT
+    Brand,
+    SUM(Quantity) AS UnitsSold,
+    ROUND(SUM(NetSales), 2) AS NetSales,
+    CASE
+        WHEN COUNT(LineWholesaleCost) = COUNT(*)
+            THEN ROUND(SUM(LineWholesaleCost), 2)
+    END AS WholesaleCost,
+    CASE
+        WHEN COUNT(LineAmazonFees) = COUNT(*)
+            THEN ROUND(SUM(LineAmazonFees), 2)
+    END AS AmazonFees,
+    CASE
+        WHEN COUNT(LineShippingCost) = COUNT(*)
+            THEN ROUND(SUM(LineShippingCost), 2)
+    END AS ShippingCost,
+    ROUND(SUM(LineReturnCost), 2) AS ReturnCost,
+    ROUND(
+        100 * SUM(ReturnedLine) / COUNT(*),
+        2
+    ) AS LineReturnRatePct,
+    SUM(MissingCostLine) AS MissingCostLines,
+    CASE
+        WHEN SUM(MissingCostLine) = 0
+            THEN ROUND(
+                SUM(
+                    NetSales
+                    - LineWholesaleCost
+                    - LineAmazonFees
+                    - LineShippingCost
+                    - LineReturnCost
+                ),
+                2
+            )
+    END AS EstimatedNetContribution,
+    CASE
+        WHEN SUM(MissingCostLine) = 0
+            THEN ROUND(
+                100 * SUM(
+                    NetSales
+                    - LineWholesaleCost
+                    - LineAmazonFees
+                    - LineShippingCost
+                    - LineReturnCost
+                ) / NULLIF(SUM(NetSales), 0),
+                2
+            )
+    END AS ContributionMarginPct
+FROM (
+    SELECT
+        Brand,
+        Quantity,
+        NetSales,
+        LineWholesaleCost,
+        AllocationShare * OrderAmazonFees AS LineAmazonFees,
+        AllocationShare * OrderShippingCost AS LineShippingCost,
+        LineReturnCost,
+        ReturnedLine,
+        MissingCostLine
+    FROM (
+        SELECT
+            p.Brand,
+            oi.Quantity,
+            oi.Quantity * oi.SellingPricePerUnit
+                - oi.Discount AS NetSales,
+            oi.Quantity * AverageUnitCost AS LineWholesaleCost,
+            ao.AmazonReferralCost + ao.SubscriptionCost
+                AS OrderAmazonFees,
+            ao.ShippingCost AS OrderShippingCost,
+            NVL(r.RefundAmount, 0)
+                + NVL(r.ReturnShippingCost, 0) AS LineReturnCost,
+            CASE
+                WHEN r.ReturnNumber IS NOT NULL THEN 1
+                ELSE 0
+            END AS ReturnedLine,
+            CASE
+                WHEN AverageUnitCost IS NULL
+                  OR ao.AmazonReferralCost IS NULL
+                  OR ao.SubscriptionCost IS NULL
+                  OR ao.ShippingCost IS NULL
+                    THEN 1
+                ELSE 0
+            END AS MissingCostLine,
+            CASE
+                WHEN SUM(
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) OVER (
+                    PARTITION BY oi.OrderNumber
+                ) > 0
+                THEN (
+                    oi.Quantity * oi.SellingPricePerUnit
+                    - oi.Discount
+                ) / NULLIF(
+                    SUM(
+                        oi.Quantity * oi.SellingPricePerUnit
+                        - oi.Discount
+                    ) OVER (
+                        PARTITION BY oi.OrderNumber
+                    ),
+                    0
+                )
+                ELSE oi.Quantity / SUM(oi.Quantity) OVER (
+                    PARTITION BY oi.OrderNumber
+                )
+            END AS AllocationShare
+        FROM F26_S001_T5_ORDER_ITEM oi
+        JOIN F26_S001_T5_AMAZON_ORDER ao
+            ON ao.OrderNumber = oi.OrderNumber
+        JOIN F26_S001_T5_PRODUCT_VARIANT pv
+            ON pv.VariantID = oi.VariantID
+        JOIN F26_S001_T5_PRODUCT p
+            ON p.ProductID = pv.ProductID
+        LEFT JOIN (
+            SELECT
+                pod.VariantID AS CostVariantID,
+                SUM(
+                    pod.OrderedQuantity * pod.CostPerUnit
+                    - pod.Discount
+                ) / SUM(pod.OrderedQuantity)
+                    AS AverageUnitCost
+            FROM F26_S001_T5_PURCHASE_ORDER_DETAIL pod
+            JOIN F26_S001_T5_PURCHASE_ORDER po
+                ON po.PurchaseOrderID = pod.PurchaseOrderID
+            WHERE po.Status = 'Received'
+            GROUP BY pod.VariantID
+        )
+            ON CostVariantID = oi.VariantID
+        LEFT JOIN F26_S001_T5_RETURN r
+            ON r.OrderNumber = oi.OrderNumber
+           AND r.LineItemNumber = oi.LineItemNumber
+    )
+)
+GROUP BY Brand
+ORDER BY NetSales DESC, Brand;
+
+-- Expected output (verified in Oracle Omega):
+-- Brand              | UnitsSold | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnCost | LineReturnRatePct | MissingCostLines | EstimatedNetContribution | ContributionMarginPct
+-- Calvin Klein       | 9         | 823.41   | NULL          | 127.48     | 25.96        | 833.37     | 100.00            | 2                | NULL                     | NULL
+-- The North Face     | 3         | 485.97   | 67.50         | 73.89      | 6.99         | 488.46     | 100.00            | 0                | -150.87                  | -31.05
+-- Amazon Essentials  | 14        | 430.06   | NULL          | 69.46      | 42.95        | 440.02     | 100.00            | 1                | NULL                     | NULL
+-- Lands' End         | 6         | 396.84   | NULL          | 61.51      | 13.98        | 401.82     | 100.00            | 1                | NULL                     | NULL
+-- Columbia           | 5         | 359.95   | NULL          | 56.97      | 22.97        | 364.93     | 100.00            | 2                | NULL                     | NULL
+-- Alpha Industries   | 2         | 251.98   | NULL          | 38.79      | 4.99         | 251.98     | 100.00            | 1                | NULL                     | NULL
+-- Ever-Pretty        | 3         | 215.97   | NULL          | 33.39      | 8.99         | 218.46     | 100.00            | 1                | NULL                     | NULL
+-- Hanes              | 8         | 205.12   | 205.00        | 35.72      | 36.95        | 212.59     | 100.00            | 0                | -285.14                  | -139.01
+-- Levi's             | 3         | 197.97   | NULL          | 32.67      | 28.97        | 202.95     | 100.00            | 1                | NULL                     | NULL
+-- CRZ Yoga           | 6         | 175.44   | 202.50        | 28.30      | 15.98        | 177.93     | 100.00            | 0                | -249.27                  | -142.08
+-- The Drop           | 4         | 170.96   | NULL          | 27.63      | 19.98        | 173.45     | 100.00            | 1                | NULL                     | NULL
+-- Dockers            | 5         | 170.95   | NULL          | 27.63      | 21.98        | 175.93     | 100.00            | 1                | NULL                     | NULL
+-- Under Armour       | 4         | 143.96   | NULL          | 23.58      | 13.98        | 148.94     | 100.00            | 1                | NULL                     | NULL
+-- Goodthreads        | 4         | 133.16   | 55.00         | 21.95      | 13.98        | 135.65     | 100.00            | 0                | -93.42                   | -70.16
+-- Nike               | 3         | 125.97   | NULL          | 20.88      | 17.98        | 130.95     | 100.00            | 2                | NULL                     | NULL
+-- ANRABESS           | 2         | 98.98    | 25.00         | 15.84      | 6.99         | 101.47     | 100.00            | 0                | -50.32                   | -50.84
+-- Adidas             | 1         | 62.99    | NULL          | 10.44      | 4.99         | 62.99      | 100.00            | 1                | NULL                     | NULL
+-- Fruit of the Loom  | 2         | 57.58    | NULL          | 10.61      | 15.98        | 62.56      | 100.00            | 1                | NULL                     | NULL
+-- Champion           | 2         | 50.38    | 25.00         | 8.55       | 6.99         | 52.87      | 100.00            | 0                | -43.03                   | -85.41
+-- Carhartt           | 2         | 41.38    | NULL          | 7.20       | 8.99         | 41.38      | 100.00            | 1                | NULL                     | NULL
+-- Ekouaer            | 1         | 29.69    | 17.50         | 5.44       | 10.99        | 32.18      | 100.00            | 0                | -36.42                   | -122.67
+-- Wrangler           | 1         | 29.69    | NULL          | 5.44       | 6.99         | 32.18      | 100.00            | 1                | NULL                     | NULL
+--
+-- 22 rows selected.
+--
+-- ============================================================
+-- Query 15: Comparable-month demand forecast.
+--
+-- English question:
+-- Based on sales in the same calendar month in previous years,
+-- how many units of each product variant might be needed?
+--
+-- Business goal: 5
+--
+-- Features:
+-- Multiple JOINs, nested subqueries, GROUP BY, SUM, AVG,
+-- COUNT, CASE, date functions, and ORDER BY.
+-- ============================================================
+PROMPT
+PROMPT ===== QUERY 15: COMPARABLE-MONTH DEMAND FORECAST =====
+
+COLUMN VariantID FORMAT 9999999990
+COLUMN ProductName FORMAT A30
+COLUMN ForecastMonth FORMAT A13
+COLUMN PriorYearsUsed FORMAT 9999999999990
+COLUMN ForecastUnits FORMAT 999999990.00
+COLUMN DataStatus FORMAT A22
+
+SELECT
+    VariantID,
+    ProductName,
+    TO_CHAR(TargetMonth, 'YYYY-MM') AS ForecastMonth,
+    PriorYearsUsed,
+    ROUND(EstimatedUnits, 2) AS ForecastUnits,
+    CASE
+        WHEN PriorYearsUsed = 1
+            THEN 'ONE-YEAR BASELINE'
+        ELSE 'MULTI-YEAR BASELINE'
+    END AS DataStatus
+FROM (
+    SELECT
+        pv.VariantID,
+        p.ProductName,
+        TargetMonth,
+        COUNT(HistoricalMonth) AS PriorYearsUsed,
+        AVG(HistoricalUnits) AS EstimatedUnits
+    FROM F26_S001_T5_PRODUCT_VARIANT pv
+    JOIN F26_S001_T5_PRODUCT p
+        ON p.ProductID = pv.ProductID
+    CROSS JOIN (
+        SELECT
+            ADD_MONTHS(
+                FirstForecastMonth,
+                LEVEL - 1
+            ) AS TargetMonth
+        FROM (
+            SELECT
+                ADD_MONTHS(
+                    TRUNC(MAX(OrderDate), 'MM'),
+                    1
+                ) AS FirstForecastMonth
+            FROM F26_S001_T5_AMAZON_ORDER
+        )
+        WHERE FirstForecastMonth IS NOT NULL
+        CONNECT BY LEVEL <= 12
+    )
+    LEFT JOIN (
+        SELECT
+            oi.VariantID AS HistoryVariantID,
+            TRUNC(ao.OrderDate, 'MM') AS HistoricalMonth,
+            SUM(oi.Quantity) AS HistoricalUnits
+        FROM F26_S001_T5_ORDER_ITEM oi
+        JOIN F26_S001_T5_AMAZON_ORDER ao
+            ON ao.OrderNumber = oi.OrderNumber
+        GROUP BY
+            oi.VariantID,
+            TRUNC(ao.OrderDate, 'MM')
+    )
+        ON HistoryVariantID = pv.VariantID
+       AND EXTRACT(MONTH FROM HistoricalMonth)
+            = EXTRACT(MONTH FROM TargetMonth)
+       AND EXTRACT(YEAR FROM HistoricalMonth)
+            < EXTRACT(YEAR FROM TargetMonth)
+    GROUP BY
+        pv.VariantID,
+        p.ProductName,
+        TargetMonth
+)
+WHERE PriorYearsUsed > 0
+ORDER BY TargetMonth, VariantID;
+
+-- Expected output (verified in Oracle Omega, current database):
+-- VariantID | ProductName                    | ForecastMonth | PriorYearsUsed | ForecastUnits | DataStatus
+-- 2001      | Classic Cotton T-Shirt         | 2027-03       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2002      | Slim Fit Oxford Shirt          | 2027-03       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2003      | Relaxed Fit Hoodie             | 2027-03       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2004      | Performance Polo Shirt         | 2027-03       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2005      | Ribbed Tank Top                | 2027-03       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2006      | Straight Leg Jeans             | 2027-03       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2007      | Slim Fit Chinos                | 2027-03       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2008      | High Rise Leggings             | 2027-03       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2009      | Cargo Shorts                   | 2027-04       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2010      | Pleated Midi Skirt             | 2027-04       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2011      | Floral Summer Dress            | 2027-04       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2012      | Formal Wrap Dress              | 2027-04       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2013      | Knit Sweater Dress             | 2027-04       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2014      | Maxi Evening Dress             | 2027-04       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2015      | Denim Shirt Dress              | 2027-04       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2016      | Lightweight Windbreaker        | 2027-04       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2017      | Puffer Winter Jacket           | 2027-05       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2018      | Classic Denim Jacket           | 2027-05       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2019      | Waterproof Raincoat            | 2027-05       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2020      | Wool Blend Overcoat            | 2027-05       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2021      | Fleece Jogger Pants            | 2027-05       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2022      | Running Compression Shorts     | 2027-05       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2023      | Yoga Sports Bra                | 2027-05       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2024      | Training Track Jacket          | 2027-06       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2025      | Workout Training Tee           | 2027-06       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2026      | Cotton Pajama Set              | 2027-06       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2027      | Satin Nightgown                | 2027-06       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2028      | Fleece Lounge Pants            | 2027-06       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2029      | Flannel Pajama Shirt           | 2027-06       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2030      | Thermal Sleep Set              | 2027-06       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2031      | Cotton Boxer Briefs            | 2027-06       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2032      | Seamless Briefs                | 2027-07       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2033      | Everyday Crew Socks            | 2027-07       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2034      | Winter Knit Beanie             | 2027-07       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2035      | Leather Casual Belt            | 2027-07       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2036      | Linen Button-Up Shirt          | 2027-07       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2037      | Oversized Graphic Tee          | 2027-07       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2038      | Corduroy Trousers              | 2027-07       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2039      | Athletic Running Leggings      | 2027-07       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2040      | Quilted Bomber Jacket          | 2027-08       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2041      | Cashmere Blend Sweater         | 2027-08       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2042      | Cotton Henley Shirt            | 2027-08       | 1              | 1.00          | ONE-YEAR BASELINE
+-- 2043      | Wide Leg Palazzo Pants         | 2027-08       | 1              | 2.00          | ONE-YEAR BASELINE
+-- 2044      | Faux Leather Skirt             | 2027-08       | 1              | 3.00          | ONE-YEAR BASELINE
+-- 2045      | Thermal Base Layer Top         | 2027-08       | 1              | 1.00          | ONE-YEAR BASELINE
+--
+-- 45 rows selected.
+-- ============================================================
+-- Query 16: Supplier credit and estimated savings
+--
+-- English question:
+-- Which suppliers currently have active Net 30 status,
+-- what are their credit limits and purchase histories,
+-- and what savings would a 3.5 percent scenario imply?
+--
+-- Business Goal: 13
+--
+-- Features:
+-- JOIN, aggregated subquery, GROUP BY,
+-- SUM, CASE, calculated columns, ORDER BY.
+-- ============================================================
+
+PROMPT
+PROMPT ===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
+
+COLUMN SupplierName FORMAT A30
+COLUMN Net30Status FORMAT A11
+COLUMN CreditLimit FORMAT 9999990.00
+COLUMN PurchaseHistory FORMAT 999999990.00
+COLUMN ReceivedPurchases FORMAT 999999990.00
+COLUMN EstSavings FORMAT 9999990.00
+COLUMN PotentialSavings FORMAT 9999990.00
+
+SELECT
+    s.SupplierID,
+    s.SupplierName,
+    s.Net30Status,
+    s.CreditLimit,
+    NVL(OrderedValue, 0) AS PurchaseHistory,
+    NVL(ReceivedValue, 0) AS ReceivedPurchases,
+    CASE
+        WHEN s.Net30Status = 'Active'
+            THEN ROUND(NVL(ReceivedValue, 0) * 0.035, 2)
+        ELSE 0
+    END AS EstSavings,
+    CASE
+        WHEN s.Net30Status = 'Inactive'
+            THEN ROUND(NVL(ReceivedValue, 0) * 0.035, 2)
+        ELSE 0
+    END AS PotentialSavings
+FROM F26_S001_T5_SUPPLIER s
+LEFT JOIN (
+    SELECT
+        SupplierID AS PurchaseSupplierID,
+        SUM(TotalCost) AS OrderedValue,
+        SUM(
+            CASE
+                WHEN Status = 'Received'
+                    THEN TotalCost
+                ELSE 0
+            END
+        ) AS ReceivedValue
+    FROM F26_S001_T5_PURCHASE_ORDER
+    GROUP BY SupplierID
+)
+    ON PurchaseSupplierID = s.SupplierID
+ORDER BY
+    PotentialSavings DESC,
+    EstSavings DESC,
+    s.SupplierName;
+
+-- Expected output (verified in Oracle Omega):
+-- SupplierID | SupplierName                   | Net30Status | CreditLimit | PurchaseHistory | ReceivedPurchases | EstSavings | PotentialSavings
+-- 28         | Lakeside Garment Wholesale      | Inactive    | 50000.00    | 800.00          | 800.00            | 0.00       | 28.00
+-- 32         | Royal Thread Supply            | Inactive    | 20000.00    | 600.00          | 600.00            | 0.00       | 21.00
+-- 8          | Urban Thread Wholesale         | Inactive    | 50000.00    | 600.00          | 600.00            | 0.00       | 21.00
+-- 36         | Brightline Textile Group       | Inactive    | 40000.00    | 400.00          | 400.00            | 0.00       | 14.00
+-- 12         | Silverline Clothing Supply     | Inactive    | 20000.00    | 400.00          | 400.00            | 0.00       | 14.00
+-- 16         | Valley Knitwear Supply         | Inactive    | 40000.00    | 400.00          | 400.00            | 0.00       | 14.00
+-- 23         | Prime Stitch Textiles          | Active      | 25000.00    | 2062.50         | 2062.50           | 72.19      | 0.00
+-- 22         | Harbor Fashion Wholesale       | Active      | 20000.00    | 1750.00         | 1750.00           | 61.25      | 0.00
+-- 7          | Coastal Denim Distributors     | Active      | 45000.00    | 1512.50         | 1512.50           | 52.94      | 0.00
+-- 31         | Skyline Apparel Trading        | Active      | 15000.00    | 1512.50         | 1512.50           | 52.94      | 0.00
+-- 21         | Sterling Garment Distributors  | Active      | 15000.00    | 1462.50         | 1462.50           | 51.19      | 0.00
+-- 11         | Liberty Textile Trading        | Active      | 15000.00    | 1312.50         | 1312.50           | 45.94      | 0.00
+-- 6          | Summit Fashion Supply          | Active      | 40000.00    | 1250.00         | 1250.00           | 43.75      | 0.00
+-- 43         | Crown Apparel Wholesale        | Active      | 25000.00    | 962.50          | 962.50            | 33.69      | 0.00
+-- 33         | Frontier Clothing Wholesale    | Active      | 25000.00    | 812.50          | 812.50            | 28.44      | 0.00
+-- 42         | Global Stitch Partners         | Active      | 20000.00    | 750.00          | 750.00            | 26.25      | 0.00
+-- 38         | Horizon Fashion Wholesale      | Active      | 50000.00    | 750.00          | 750.00            | 26.25      | 0.00
+-- 18         | Westbrook Apparel Group        | Active      | 50000.00    | 750.00          | 750.00            | 26.25      | 0.00
+-- 3          | Evergreen Fabric Distributors  | Active      | 25000.00    | 612.50          | 612.50            | 21.44      | 0.00
+-- 27         | Meridian Textile Supply        | Active      | 45000.00    | 612.50          | 612.50            | 21.44      | 0.00
+-- 17         | Atlantic Fashion Trading       | Active      | 45000.00    | 562.50          | 562.50            | 19.69      | 0.00
+-- 37         | Capital Garment Supply         | Active      | 45000.00    | 562.50          | 562.50            | 19.69      | 0.00
+-- 13         | Oakwood Fashion Distributors   | Active      | 25000.00    | 562.50          | 562.50            | 19.69      | 0.00
+-- 41         | Riverside Textile Trading      | Active      | 15000.00    | 562.50          | 562.50            | 19.69      | 0.00
+-- 26         | Brookfield Clothing Partners   | Active      | 40000.00    | 450.00          | 450.00            | 15.75      | 0.00
+-- 2          | Golden State Apparel Supply    | Active      | 20000.00    | 450.00          | 450.00            | 15.75      | 0.00
+-- 1          | Pacific Cotton Textiles        | Active      | 15000.00    | 312.50          | 312.50            | 10.94      | 0.00
+-- 29         | Aspire Fashion Distributors    | Active      | 55000.00    | 1012.50         | 0.00              | 0.00       | 0.00
+-- 5          | Blue Ridge Textile Group       | Active      | 35000.00    | 1012.50         | 0.00              | 0.00       | 0.00
+-- 24         | Canyon Apparel Supply          | Inactive    | 30000.00    | 200.00          | 0.00              | 0.00       | 0.00
+-- 30         | Cedar Valley Textiles          | Active      | 10000.00    | 1250.00         | 0.00              | 0.00       | 0.00
+-- 45         | Continental Fashion Textiles   | Active      | 35000.00    | 1462.50         | 0.00              | 0.00       | 0.00
+-- 19         | Crescent Textile Partners      | Active      | 55000.00    | 962.50          | 0.00              | 0.00       | 0.00
+-- 34         | Diamond Fabric Partners        | Active      | 30000.00    | 1050.00         | 0.00              | 0.00       | 0.00
+-- 40         | Elite Cotton Distributors      | Inactive    | 10000.00    | 400.00          | 0.00              | 0.00       | 0.00
+-- 25         | Grandview Fabric Company       | Active      | 35000.00    | 312.50          | 0.00              | 0.00       | 0.00
+-- 9          | Heritage Garment Supply        | Active      | 55000.00    | 812.50          | 0.00              | 0.00       | 0.00
+-- 35         | Maple Grove Apparel            | Active      | 35000.00    | 1312.50         | 0.00              | 0.00       | 0.00
+-- 14         | Metro Garment Wholesale        | Active      | 30000.00    | 750.00          | 0.00              | 0.00       | 0.00
+-- 4          | Northstar Clothing Wholesale   | Inactive    | 30000.00    | 800.00          | 0.00              | 0.00       | 0.00
+-- 15         | Pioneer Cotton Company         | Active      | 35000.00    | 962.50          | 0.00              | 0.00       | 0.00
+-- 44         | Premier Garment Supply         | Inactive    | 30000.00    | 1200.00         | 0.00              | 0.00       | 0.00
+-- 20         | Redwood Clothing Supply        | Inactive    | 10000.00    | 1200.00         | 0.00              | 0.00       | 0.00
+-- 39         | Stonebridge Clothing Supply    | Active      | 55000.00    | 962.50          | 0.00              | 0.00       | 0.00
+-- 10         | Sunrise Apparel Partners       | Active      | 10000.00    | 1050.00         | 0.00              | 0.00       | 0.00
+--
+-- 45 rows selected.
+
