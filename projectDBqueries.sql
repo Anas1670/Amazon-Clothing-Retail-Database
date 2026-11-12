@@ -88,7 +88,16 @@ WHERE AvailableStock = 0
    OR DaysCover <= StandardLeadTime
 ORDER BY AvailableStock, VariantID;
 
--- Expected output (verified in Oracle Omega):
+-- Expected output (verified in Oracle Omega, before update):
+--
+-- VariantID | ProductName           | SupplierName                 | AvailableStock | ReorderThreshold | UnitsLast30 | DailySalesVelocity | DaysInventoryCover | StandardLeadTime | StockStatus
+-- 2012      | Formal Wrap Dress     | Silverline Clothing Supply   | 20             | 25               | 0           | 0.000              | NULL               | 17               | REORDER NEEDED
+-- 2024      | Training Track Jacket | Canyon Apparel Supply        | 20             | 35               | 0           | 0.000              | NULL               | 13               | REORDER NEEDED
+-- 2036      | Linen Button-Up Shirt | Brightline Textile Group     | 20             | 20               | 0           | 0.000              | NULL               | 9                | REORDER NEEDED
+-- 2013      | Knit Sweater Dress    | Oakwood Fashion Distributors | 27             | 30               | 0           | 0.000              | NULL               | 18               | REORDER NEEDED
+-- 2014      | Maxi Evening Dress    | Metro Garment Wholesale      | 34             | 35               | 0           | 0.000              | NULL               | 19               | REORDER NEEDED
+--
+-- Expected output (verified in Oracle Omega, after update):
 --
 -- VariantID | ProductName             | SupplierName               | AvailableStock | ReorderThreshold | UnitsLast30 | DailySalesVelocity | DaysInventoryCover | StandardLeadTime | StockStatus
 -- 2012      | Formal Wrap Dress       | Silverline Clothing Supply | 20             | 25               | 0           | 0.000              | NULL               | 17               | REORDER NEEDED
@@ -1510,8 +1519,22 @@ FROM (
 )
 ORDER BY ReportMonth;
 
-
--- Expected output (verified in Oracle Omega):
+-- Expected output (verified in Oracle Omega, before update):
+--
+-- ReportMonth | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | OperatingCosts | EstimatedSalaries | MissingCostLines | MissingCostOrders | EstimatedProfitLoss
+-- 2026-01     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 5369.00        | 228166.67         | 0                | 0                 | -233535.67
+-- 2026-02     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 1645.00        | 228166.67         | 0                | 0                 | -229811.67
+-- 2026-03     | 534.43   | NULL          | 88.10      | 63.92        | 283.29        | 19.96          | 1155.00        | 228166.67         | 2                | 0                 | NULL
+-- 2026-04     | 822.45   | NULL          | 131.30     | 63.92        | 634.65        | 29.94          | 5369.00        | 228166.67         | 4                | 0                 | NULL
+-- 2026-05     | 1428.15  | NULL          | 221.17     | 58.93        | 1661.35       | 24.95          | 1645.00        | 228166.67         | 2                | 0                 | NULL
+-- 2026-06     | 514.65   | NULL          | 85.12      | 63.92        | 473.55        | 29.94          | 1155.00        | 228166.67         | 4                | 0                 | NULL
+-- 2026-07     | 476.84   | NULL          | 79.45      | 63.92        | 424.94        | 29.94          | 5369.00        | 228166.67         | 3                | 0                 | NULL
+-- 2026-08     | 881.88   | NULL          | 138.23     | 43.94        | 880.16        | 24.95          | 1645.00        | 228166.67         | 3                | 0                 | NULL
+-- 2026-09     | 0.00     | 0.00          | 0.00       | 0.00         | 215.46        | 9.98           | 1155.00        | 228166.67         | 0                | 0                 | -229547.11
+--
+-- 9 rows selected.
+--
+-- Expected output (verified in Oracle Omega, after update):
 --
 -- ReportMonth | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | OperatingCosts | EstimatedSalaries | MissingCostLines | MissingCostOrders | EstimatedProfitLoss
 -- 2026-01     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 5369.00        | 228166.67         | 0                | 0                 | -233535.67
@@ -2126,8 +2149,6 @@ ORDER BY
     EstSavings35 DESC,
     RecordedRateSavings DESC,
     s.SupplierName;
-
--- Expected output (verified in Oracle Omega):
 
 -- Expected output (verified in Oracle Omega):
 --
