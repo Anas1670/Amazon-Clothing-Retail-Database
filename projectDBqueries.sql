@@ -115,8 +115,7 @@ ORDER BY AvailableStock, VariantID;
 --
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 2: MONTHLY CATEGORY PROFITABILITY =====
+===== QUERY 2: MONTHLY CATEGORY PROFITABILITY =====
 
 COLUMN SalesMonth FORMAT A10
 COLUMN Category FORMAT A15
@@ -298,8 +297,7 @@ ORDER BY SalesMonth, Category;
 -- COUNT, SUM, LIKE, CASE, OVER, and ORDER BY.
 --
 -- ============================================================
-PROMPT
-PROMPT ===== QUERY 3: RETURN RATES AND REASONS =====
+QUERY 3: RETURN RATES AND REASONS =====
 
 COLUMN ProductName FORMAT A28
 COLUMN Brand FORMAT A18
@@ -450,8 +448,8 @@ ORDER BY
 --
 -- Features: Multiple JOINs, ROLLUP, GROUPING, CASE, aggregates.
 -- ============================================================
-PROMPT
-PROMPT ===== QUERY 4: MONTHLY CATEGORY SALES ROLLUP =====
+
+===== QUERY 4: MONTHLY CATEGORY SALES ROLLUP =====
 
 COLUMN SalesMonth FORMAT A12
 COLUMN CategoryLabel FORMAT A22
@@ -536,8 +534,7 @@ ORDER BY
 --           NOT EXISTS, JOIN.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 5: SUPPLIERS COVERING ALL ASSIGNED VARIANTS =====
+===== QUERY 5: SUPPLIERS COVERING ALL ASSIGNED VARIANTS =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A12
@@ -616,8 +613,7 @@ ORDER BY s.SupplierName, s.SupplierID;
 --           SUM OVER, nested filtering.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 6: MONTHLY TOP VARIANTS =====
+===== QUERY 6: MONTHLY TOP VARIANTS =====
 
 COLUMN SalesMonth FORMAT A10
 COLUMN ProductName FORMAT A28
@@ -719,8 +715,7 @@ ORDER BY rs.MonthStart, rs.RevenueRank, rs.VariantID;
 --           ORDER BY, FETCH FIRST.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 7: PRODUCT PRICE SIMILARITY =====
+===== QUERY 7: PRODUCT PRICE SIMILARITY =====
 
 COLUMN ProductName FORMAT A25
 COLUMN Category FORMAT A20
@@ -778,8 +773,7 @@ FETCH FIRST 5 ROWS ONLY;
 -- calculated column, ORDER BY, FETCH FIRST.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 8: RETURN COST ANALYSIS =====
+===== QUERY 8: RETURN COST ANALYSIS =====
 
 COLUMN Category FORMAT A18
 COLUMN Brand FORMAT A22
@@ -851,8 +845,7 @@ FETCH FIRST 10 ROWS ONLY;
 -- COUNT, SUM, AVG, CASE, calculated percentages, ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 9: SUPPLIER PERFORMANCE SUMMARY =====
+===== QUERY 9: SUPPLIER PERFORMANCE SUMMARY =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A11
@@ -956,8 +949,22 @@ ORDER BY
     AvgLeadDays ASC NULLS LAST,
     s.SupplierName;
 
--- Expected output should be regenerated after testing the
--- distinct-order-line return-rate calculation on Omega.
+-- Expected output (verified in Oracle Omega):
+--
+-- 45 supplier records selected.
+--
+-- Columns:
+-- SupplierID, SupplierName, Net30Status, CreditLimit,
+-- ReceivedOrders, OnTimePct, AvgLeadDays, PurchaseHistory,
+-- ReceivedValue, ReturnRatePct.
+--
+-- ReturnRatePct is calculated using distinct sold order lines
+-- and distinct returned order lines.
+--
+-- In the current dataset, all 45 returned order lines correspond
+-- to sold order lines, producing a 100% return rate.
+-- Suppliers without received purchase orders can still have
+-- customer sales and returns.
 
 -- ============================================================
 -- Query 10: Shipping carrier and service performance analysis.
@@ -976,8 +983,7 @@ ORDER BY
 --           calculated percentage, ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 10: SHIPPING PERFORMANCE ANALYSIS =====
+===== QUERY 10: SHIPPING PERFORMANCE ANALYSIS =====
 
 COLUMN ShippingCarrier FORMAT A16
 COLUMN ShippingService FORMAT A14
@@ -1060,8 +1066,7 @@ ORDER BY
 -- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 11: PRODUCT-VARIANT PROFITABILITY =====
+===== QUERY 11: PRODUCT-VARIANT PROFITABILITY =====
 
 COLUMN ProductName FORMAT A30
 COLUMN VariantSize FORMAT A11
@@ -1269,8 +1274,7 @@ ORDER BY
 -- CASE, calendar generation, calculated columns, ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 12: MONTHLY PROFIT AND LOSS =====
+===== QUERY 12: MONTHLY PROFIT AND LOSS =====
 
 COLUMN ReportMonth FORMAT A11
 COLUMN NetSales FORMAT 999999990.00
@@ -1456,26 +1460,29 @@ FROM (
             TRUNC(ExpenseDate, 'MM') AS ExpenseMonth,
             SUM(Amount) AS MonthlyOperatingCosts
         FROM F26_S001_T5_OPERATING_COST
+        WHERE UPPER(Category) <> 'PAYROLL'
         GROUP BY TRUNC(ExpenseDate, 'MM')
     )
         ON ExpenseMonth = ReportMonth
 )
 ORDER BY ReportMonth;
 
+
 -- Expected output (verified in Oracle Omega, updated database):
 --
 -- ReportMonth | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | OperatingCosts | EstimatedSalaries | MissingCostLines | MissingCostOrders | EstimatedProfitLoss
--- 2026-01     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 5369.00        | 228166.67         | 0                | 0                 | -233535.67
--- 2026-02     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 1645.00        | 228166.67         | 0                | 0                 | -229811.67
--- 2026-03     | 534.43   | NULL          | 88.10      | 63.92        | 283.29        | 19.96          | 9670.00        | 228166.67         | 2                | 0                 | NULL
--- 2026-04     | 822.45   | NULL          | 131.30     | 63.92        | 634.65        | 29.94          | 5369.00        | 228166.67         | 4                | 0                 | NULL
--- 2026-05     | 1428.15  | NULL          | 221.17     | 58.93        | 1661.35       | 24.95          | 1645.00        | 228166.67         | 2                | 0                 | NULL
--- 2026-06     | 514.65   | NULL          | 85.12      | 63.92        | 473.55        | 29.94          | 9670.00        | 228166.67         | 4                | 0                 | NULL
--- 2026-07     | 476.84   | NULL          | 79.45      | 63.92        | 424.94        | 29.94          | 5369.00        | 228166.67         | 3                | 0                 | NULL
--- 2026-08     | 881.88   | NULL          | 138.23     | 43.94        | 880.16        | 24.95          | 1645.00        | 228166.67         | 3                | 0                 | NULL
--- 2026-09     | 0.00     | 0.00          | 0.00       | 0.00         | 215.46        | 9.98           | 9460.00        | 228166.67         | 0                | 0                 | -237852.11
--- 2026-10     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 0.00           | 228166.67         | 0                | 0                 | -228166.67
--- 2026-11     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 125.00         | 228166.67         | 0                | 0                 | -228291.67
+--
+-- 2026-01 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 5369.00 | 228166.67 | 0 | 0 | -233535.67
+-- 2026-02 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 1645.00 | 228166.67 | 0 | 0 | -229811.67
+-- 2026-03 | 534.43 | NULL | 88.10 | 63.92 | 283.29 | 19.96 | 1155.00 | 228166.67 | 2 | 0 | NULL
+-- 2026-04 | 822.45 | NULL | 131.30 | 63.92 | 634.65 | 29.94 | 5369.00 | 228166.67 | 4 | 0 | NULL
+-- 2026-05 | 1428.15 | NULL | 221.17 | 58.93 | 1661.35 | 24.95 | 1645.00 | 228166.67 | 2 | 0 | NULL
+-- 2026-06 | 514.65 | NULL | 85.12 | 63.92 | 473.55 | 29.94 | 1155.00 | 228166.67 | 4 | 0 | NULL
+-- 2026-07 | 476.84 | NULL | 79.45 | 63.92 | 424.94 | 29.94 | 5369.00 | 228166.67 | 3 | 0 | NULL
+-- 2026-08 | 881.88 | NULL | 138.23 | 43.94 | 880.16 | 24.95 | 1645.00 | 228166.67 | 3 | 0 | NULL
+-- 2026-09 | 0.00 | 0.00 | 0.00 | 0.00 | 215.46 | 9.98 | 945.00 | 228166.67 | 0 | 0 | -229337.11
+-- 2026-10 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 228166.67 | 0 | 0 | -228166.67
+-- 2026-11 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 125.00 | 228166.67 | 0 | 0 | -228291.67
 --
 -- 11 rows selected.
 
@@ -1495,8 +1502,7 @@ ORDER BY ReportMonth;
 -- ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
+===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
 
 COLUMN ReportLevel FORMAT A12
 COLUMN Fname FORMAT A12
@@ -1668,8 +1674,7 @@ ORDER BY
 -- SUM, COUNT, CASE, OVER, calculated columns, ORDER BY.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 14: BRAND PERFORMANCE =====
+===== QUERY 14: BRAND PERFORMANCE =====
 
 COLUMN Brand FORMAT A20
 COLUMN UnitsSold FORMAT 999990
@@ -1859,8 +1864,7 @@ ORDER BY NetSales DESC, Brand;
 -- Multiple JOINs, nested subqueries, GROUP BY, SUM, AVG,
 -- COUNT, CASE, date functions, and ORDER BY.
 -- ============================================================
-PROMPT
-PROMPT ===== QUERY 15: COMPARABLE-MONTH DEMAND FORECAST =====
+===== QUERY 15: COMPARABLE-MONTH DEMAND FORECAST =====
 
 COLUMN VariantID FORMAT 9999999990
 COLUMN ProductName FORMAT A30
@@ -2005,8 +2009,7 @@ ORDER BY TargetMonth, VariantID;
 -- These are estimates, not verified realized savings.
 -- ============================================================
 
-PROMPT
-PROMPT ===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
+===== QUERY 16: SUPPLIER CREDIT AND SAVINGS SUMMARY =====
 
 COLUMN SupplierName FORMAT A30
 COLUMN Net30Status FORMAT A11
