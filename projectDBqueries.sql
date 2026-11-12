@@ -297,9 +297,6 @@ ORDER BY SalesMonth, Category;
 -- product variant, identified by product, brand, category,
 -- size, and color? What share of its returns had each reason?
 --
--- ReturnRatePct is an ORDER-LINE return rate, not a unit-return
--- rate. The RETURN table has no returned-quantity attribute.
---
 -- Business Goals: 2 and 3
 --
 -- Features:
@@ -502,7 +499,7 @@ ORDER BY
     GROUPING(p.Category),
     p.Category;
 
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- SalesMonth | CategoryLabel  | UnitsSold | NetRevenue
 -- 2026-03    | Bottoms        | 6         | 241.14
@@ -579,7 +576,7 @@ AND NOT EXISTS (
 )
 ORDER BY s.SupplierName, s.SupplierID;
 
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- SupplierID | SupplierName                   | Net30Status | CreditLimit
 -- 17         | Atlantic Fashion Trading       | Active      | 45000.00
@@ -694,7 +691,7 @@ FROM (
 WHERE rs.RevenueRank <= 3
 ORDER BY rs.MonthStart, rs.RevenueRank, rs.VariantID;
 
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- SalesMonth | VariantID | ProductName                 | Brand             | UnitsSold | NetRevenue | RevenueRank | MonthlyRevenuePct
 -- 2026-03    | 2008      | High Rise Leggings          | CRZ Yoga          | 3         | 97.17      | 1           | 18.18
@@ -720,7 +717,7 @@ ORDER BY rs.MonthStart, rs.RevenueRank, rs.VariantID;
 -- ============================================================
 -- Query 7: Product price similarity recommendations.
 --
--- Business question:
+-- English question:
 -- Which five product variants have pricing characteristics
 -- most similar to the Classic Cotton T-Shirt (Variant 2001),
 -- based on MSRP and selling price?
@@ -763,13 +760,12 @@ FETCH FIRST 5 ROWS ONLY;
 
 -- Expected output (verified in Oracle Omega):
 --
--- VariantID  ProductName             Category      MSRP   SellingPrice  PriceDistance
--- 2033       Everyday Crew Socks     Accessories   18.99  17.09         1.35
--- 2005       Ribbed Tank Top         Tops          16.99  15.29         4.04
--- 2034       Winter Knit Beanie      Accessories   22.99  20.69         4.04
--- 2032       Seamless Briefs         Underwear     24.99  22.49         6.73
--- 2042       Cotton Henley Shirt     Tops          26.99  24.29         9.42
--- 5 rows selected.
+-- VariantID | ProductName         | Category    | MSRP  | SellingPrice | PriceDistance
+-- 2033      | Everyday Crew Socks | Accessories | 18.99 | 17.09        | 1.35
+-- 2005      | Ribbed Tank Top     | Tops        | 16.99 | 15.29        | 4.04
+-- 2034      | Winter Knit Beanie  | Accessories | 22.99 | 20.69        | 4.04
+-- 2032      | Seamless Briefs     | Underwear   | 24.99 | 22.49        | 6.73
+-- 2042      | Cotton Henley Shirt | Tops        | 26.99 | 24.29        | 9.42
 
 -- ============================================================
 -- Query 8: Return cost analysis by category and brand
@@ -1019,7 +1015,7 @@ ORDER BY
 -- ============================================================
 -- Query 10: Shipping carrier and service performance analysis.
 --
--- English:
+-- English question:
 --
 -- Compare shipping carriers and shipping services by
 -- calculating the number of orders shipped, customers served,
@@ -1094,18 +1090,17 @@ ORDER BY
     AverageShippingCost ASC,
     ao.ShippingCarrier;
 
--- Expected output (initial populated database, before updates; verified in Oracle Omega):
+-- Expected output (verified in Oracle Omega):
 --
 -- ShippingCarrier | ShippingService | TotalOrders | CustomersServed | AvgShippingCost | AvgWeight | AvgDeliveryDays | OnTime | Late | OnTime%
 -- FedEx           | Standard        | 15          | 15              | 7.79            | 1.32      | 4.00            | 15     | 0    | 100.00
 -- UPS             | Ground          | 15          | 15              | 7.92            | 1.33      | 4.00            | 15     | 0    | 100.00
 -- USPS            | Express         | 15          | 15              | 8.19            | 1.43      | 4.00            | 15     | 0    | 100.00
--- 3 rows selected.
 
 -- ============================================================
 -- Query 11: Product-variant profitability
 --
--- Business question:
+-- English question:
 -- What estimated contribution does each sold product variant
 -- generate after wholesale costs, Amazon fees, outbound
 -- shipping, actual refunds, and return-shipping costs?
@@ -1314,7 +1309,7 @@ ORDER BY
 -- ============================================================
 -- Query 12: Monthly profit and loss estimate
 --
--- Business question:
+-- English question:
 -- What are monthly sales, wholesale costs, Amazon fees,
 -- outbound shipping, refunds, return shipping, operating
 -- expenses, estimated salaries, and profit or loss?
@@ -1554,7 +1549,7 @@ ORDER BY ReportMonth;
 -- ============================================================
 -- Query 13: Customer purchase behavior
 --
--- Business question:
+-- English question:
 -- What are average order value, single-versus-multiple-variant
 -- purchasing patterns, and repeat purchase rates for each
 -- purchasing customer and for the business overall?
@@ -1727,7 +1722,7 @@ ORDER BY
 -- ============================================================
 -- Query 14: Brand performance
 --
--- Business question:
+-- English question:
 -- Which brands perform best in sales revenue, estimated
 -- contribution margin, and observed return rate?
 --
