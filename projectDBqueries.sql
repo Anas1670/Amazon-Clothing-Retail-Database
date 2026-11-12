@@ -1572,7 +1572,6 @@ PROMPT ===== QUERY 13: CUSTOMER PURCHASE BEHAVIOR =====
 COLUMN ReportLevel FORMAT A12
 COLUMN Fname FORMAT A12
 COLUMN Lname FORMAT A15
-COLUMN PurchasingCustomers FORMAT 999990
 COLUMN TotalOrders FORMAT 999990
 COLUMN AverageOrderValue FORMAT 9999990.00
 COLUMN SingleVariantOrders FORMAT 999990
@@ -1591,7 +1590,6 @@ SELECT
     CustomerID,
     Fname,
     Lname,
-    COUNT(*) AS PurchasingCustomers,
     SUM(OrderCount) AS TotalOrders,
     ROUND(
         SUM(Revenue) / NULLIF(SUM(OrderCount), 0),
@@ -1676,56 +1674,56 @@ ORDER BY
 
 -- Expected output (verified in Oracle Omega):
 --
--- ReportLevel | CustomerID | Fname     | Lname     | PurchasingCustomers | TotalOrders | AverageOrderValue | SingleVariantOrders | MultiVariantOrders | SingleVariantOrderPct | MultiVariantOrderPct | RepeatCustomers | RepeatCustomerPct
--- ALL BUYERS  | NULL       | NULL      | NULL      | 45                  | 45          | 103.52            | 45                  | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5001       | James     | Miller    | 1                   | 1           | 35.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5002       | Emma      | Wilson    | 1                   | 1           | 94.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5003       | Michael   | Garcia    | 1                   | 1           | 35.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5004       | Olivia    | Gonzalez  | 1                   | 1           | 80.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5005       | William   | Jones     | 1                   | 1           | 45.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5006       | Sophia    | Lopez     | 1                   | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5007       | Daniel    | Brown     | 1                   | 1           | 89.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5008       | Ava       | Hernandez | 1                   | 1           | 97.17             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5009       | Benjamin  | Williams  | 1                   | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5010       | Isabella  | Martinez  | 1                   | 1           | 82.78             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5011       | Alexander | Johnson   | 1                   | 1           | 116.07            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5012       | Mia       | Rodriguez | 1                   | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5013       | Ethan     | Smith     | 1                   | 1           | 98.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5014       | Charlotte | Davis     | 1                   | 1           | 215.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5015       | Lucas     | Anderson  | 1                   | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5016       | James     | Miller    | 1                   | 1           | 134.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5017       | Emma      | Wilson    | 1                   | 1           | 485.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5018       | Michael   | Garcia    | 1                   | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5019       | Olivia    | Gonzalez  | 1                   | 1           | 179.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5020       | William   | Jones     | 1                   | 1           | 512.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5021       | Sophia    | Lopez     | 1                   | 1           | 26.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5022       | Daniel    | Brown     | 1                   | 1           | 62.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5023       | Ava       | Hernandez | 1                   | 1           | 78.27             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5024       | Benjamin  | Williams  | 1                   | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5025       | Isabella  | Martinez  | 1                   | 1           | 71.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5026       | Alexander | Johnson   | 1                   | 1           | 105.27            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5027       | Mia       | Rodriguez | 1                   | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5028       | Ethan     | Smith     | 1                   | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5029       | Charlotte | Davis     | 1                   | 1           | 99.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5030       | Lucas     | Anderson  | 1                   | 1           | 40.49             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5031       | James     | Miller    | 1                   | 1           | 53.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5032       | Emma      | Wilson    | 1                   | 1           | 67.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5033       | Michael   | Garcia    | 1                   | 1           | 17.09             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5034       | Olivia    | Gonzalez  | 1                   | 1           | 41.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5035       | William   | Jones     | 1                   | 1           | 80.97             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5036       | Sophia    | Lopez     | 1                   | 1           | 38.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5037       | Daniel    | Brown     | 1                   | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5038       | Ava       | Hernandez | 1                   | 1           | 126.87            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5039       | Benjamin  | Williams  | 1                   | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5040       | Isabella  | Martinez  | 1                   | 1           | 251.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5041       | Alexander | Johnson   | 1                   | 1           | 296.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5042       | Mia       | Rodriguez | 1                   | 1           | 24.29             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5043       | Ethan     | Smith     | 1                   | 1           | 88.18             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5044       | Charlotte | Davis     | 1                   | 1           | 175.47            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
--- CUSTOMER    | 5045       | Lucas     | Anderson  | 1                   | 1           | 44.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- ReportLevel | CustomerID | Fname     | Lname     | TotalOrders | AverageOrderValue | SingleVariantOrders | MultiVariantOrders | SingleVariantOrderPct | MultiVariantOrderPct | RepeatCustomers | RepeatCustomerPct
+-- ALL BUYERS  | NULL       | NULL      | NULL      | 45          | 103.52            | 45                  | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5001       | James     | Miller    | 1           | 35.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5002       | Emma      | Wilson    | 1           | 94.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5003       | Michael   | Garcia    | 1           | 35.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5004       | Olivia    | Gonzalez  | 1           | 80.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5005       | William   | Jones     | 1           | 45.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5006       | Sophia    | Lopez     | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5007       | Daniel    | Brown     | 1           | 89.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5008       | Ava       | Hernandez | 1           | 97.17             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5009       | Benjamin  | Williams  | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5010       | Isabella  | Martinez  | 1           | 82.78             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5011       | Alexander | Johnson   | 1           | 116.07            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5012       | Mia       | Rodriguez | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5013       | Ethan     | Smith     | 1           | 98.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5014       | Charlotte | Davis     | 1           | 215.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5015       | Lucas     | Anderson  | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5016       | James     | Miller    | 1           | 134.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5017       | Emma      | Wilson    | 1           | 485.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5018       | Michael   | Garcia    | 1           | 80.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5019       | Olivia    | Gonzalez  | 1           | 179.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5020       | William   | Jones     | 1           | 512.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5021       | Sophia    | Lopez     | 1           | 26.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5022       | Daniel    | Brown     | 1           | 62.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5023       | Ava       | Hernandez | 1           | 78.27             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5024       | Benjamin  | Williams  | 1           | 62.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5025       | Isabella  | Martinez  | 1           | 71.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5026       | Alexander | Johnson   | 1           | 105.27            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5027       | Mia       | Rodriguez | 1           | 29.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5028       | Ethan     | Smith     | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5029       | Charlotte | Davis     | 1           | 99.87             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5030       | Lucas     | Anderson  | 1           | 40.49             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5031       | James     | Miller    | 1           | 53.98             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5032       | Emma      | Wilson    | 1           | 67.47             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5033       | Michael   | Garcia    | 1           | 17.09             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5034       | Olivia    | Gonzalez  | 1           | 41.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5035       | William   | Jones     | 1           | 80.97             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5036       | Sophia    | Lopez     | 1           | 38.69             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5037       | Daniel    | Brown     | 1           | 50.38             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5038       | Ava       | Hernandez | 1           | 126.87            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5039       | Benjamin  | Williams  | 1           | 53.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5040       | Isabella  | Martinez  | 1           | 251.98            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5041       | Alexander | Johnson   | 1           | 296.97            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5042       | Mia       | Rodriguez | 1           | 24.29             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5043       | Ethan     | Smith     | 1           | 88.18             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5044       | Charlotte | Davis     | 1           | 175.47            | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
+-- CUSTOMER    | 5045       | Lucas     | Anderson  | 1           | 44.99             | 1                   | 0                  | 100.00                | 0.00                 | 0               | 0.00
 --
 -- 46 rows selected.
-
+--
 -- ============================================================
 -- Query 14: Brand performance
 --
