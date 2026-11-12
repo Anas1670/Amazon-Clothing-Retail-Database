@@ -10,7 +10,6 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 
 -- ============================================================
 -- Query 1: Complete inventory alert report
-PROMPT ===== QUERY 1: COMPLETE INVENTORY ALERT REPORT =====
 --
 -- English question:
 -- Which variants are out of stock, at or below their reorder
