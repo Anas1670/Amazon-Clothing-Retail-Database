@@ -957,8 +957,6 @@ ORDER BY
 
 -- Expected output (verified in Oracle Omega):
 --
--- Expected output (verified in Oracle Omega, current database):
---
 -- SupplierID | SupplierName                   | Net30Status | CreditLimit | ReceivedOrders | OnTimePct | AvgLeadDays | PurchaseHistory | ReceivedValue | ReturnRatePct
 -- 36         | Brightline Textile Group       | Inactive    | 40000.00    | 1              | 100.00    | 8.00        | 400.00          | 400.00        | 100.00
 -- 3          | Evergreen Fabric Distributors  | Active      | 25000.00    | 1              | 100.00    | 8.00        | 612.50          | 612.50        | 100.00
@@ -1513,9 +1511,7 @@ FROM (
 ORDER BY ReportMonth;
 
 
--- Expected output (verified in Oracle Omega, updated database):
---
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- ReportMonth | NetSales | WholesaleCost | AmazonFees | ShippingCost | ReturnRefunds | ReturnShipping | OperatingCosts | EstimatedSalaries | MissingCostLines | MissingCostOrders | EstimatedProfitLoss
 -- 2026-01     | 0.00     | 0.00          | 0.00       | 0.00         | 0.00          | 0.00           | 5369.00        | 228166.67         | 0                | 0                 | -233535.67
@@ -1984,7 +1980,7 @@ FROM (
 WHERE PriorYearsUsed > 0
 ORDER BY TargetMonth, VariantID;
 
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- VariantID | ProductName                    | ForecastMonth | PriorYearsUsed | ForecastUnits | DataStatus
 -- 2001      | Classic Cotton T-Shirt         | 2027-03       | 1              | 2.00          | ONE-YEAR BASELINE
@@ -2133,7 +2129,7 @@ ORDER BY
 
 -- Expected output (verified in Oracle Omega):
 
--- Expected output (verified in Oracle Omega, current database):
+-- Expected output (verified in Oracle Omega):
 --
 -- SupplierID | SupplierName                   | Net30Status | PaymentTerms | CreditLimit | SavingsPercentage | PurchaseHistory | ReceivedPurchases | RecordedRateSavings | EstSavings35 | PotentialSavings35
 -- 21         | Sterling Garment Distributors  | Active      | Net 45       | 15000.00    | 6.00              | 1462.50         | 1462.50           | 87.75               | 0.00         | 51.19
