@@ -2079,5 +2079,25 @@ ORDER BY
     RecordedRateSavings DESC,
     s.SupplierName;
 
--- Expected output should be regenerated after testing the
--- supplier-specific recorded savings and Net 30 eligibility.
+-- Expected result: 45 supplier records.
+
+-- SupplierID, SupplierName, Net30Status, PaymentTerms,
+-- CreditLimit, SavingsPercentage, PurchaseHistory,
+-- ReceivedPurchases, RecordedRateSavings,
+-- EstSavings35, and PotentialSavings35.
+--
+-- RecordedRateSavings:
+-- Actual received-purchase value multiplied by the
+-- supplier's recorded SavingsPercentage.
+--
+-- EstSavings35:
+-- Hypothetical 3.5% savings for suppliers with both
+-- Active status and Net 30 payment terms.
+--
+-- PotentialSavings35:
+-- Hypothetical 3.5% savings for suppliers not currently
+-- meeting both eligibility conditions.
+--
+-- These estimates are not verified realized savings.
+--
+-- Verified execution on Oracle Omega: 45 rows selected.
